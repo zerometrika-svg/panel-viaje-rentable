@@ -104,6 +104,12 @@ export default function App() {
   const [errorsError, setErrorsError] = useState("");
   const [reviewingErrorId, setReviewingErrorId] = useState("");
   const [reviewErrorActionError, setReviewErrorActionError] = useState("");
+  const [deletingErrorId, setDeletingErrorId] = useState("");
+  const [deleteErrorActionError, setDeleteErrorActionError] = useState("");
+  const [deletingReviewed, setDeletingReviewed] = useState(false);
+  const [deleteReviewedActionError, setDeleteReviewedActionError] = useState("");
+  const [deletingAll, setDeletingAll] = useState(false);
+  const [deleteAllActionError, setDeleteAllActionError] = useState("");
 
   const [licenses, setLicenses] = useState([]);
   const [devices, setDevices] = useState([]);
@@ -307,6 +313,98 @@ export default function App() {
     }
   };
 
+  const handleDeleteError = async (id) => {
+    if (id === null || id === undefined || id === "") {
+      setDeleteErrorActionError("No se pudo ejecutar la acción (id inválido)");
+      return;
+    }
+
+    const normalizedId = String(id);
+    const ok = window.confirm("¿Eliminar este error? Esta acción no se puede deshacer.");
+    if (!ok) return;
+
+    setDeletingErrorId(normalizedId);
+    setDeleteErrorActionError("");
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/errors/${encodeURIComponent(normalizedId)}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        setDeleteErrorActionError(`Error al eliminar (${res.status})`);
+        return;
+      }
+      const payload = await res.json().catch(() => null);
+      if (payload?.ok !== true) {
+        setDeleteErrorActionError("Error al eliminar");
+        return;
+      }
+      await fetchErrors();
+    } catch (err) {
+      setDeleteErrorActionError("Error al eliminar");
+    } finally {
+      setDeletingErrorId("");
+    }
+  };
+
+  const handleDeleteReviewedErrors = async () => {
+    const ok = window.confirm("¿Eliminar todos los errores revisados? Esta acción no se puede deshacer.");
+    if (!ok) return;
+
+    setDeletingReviewed(true);
+    setDeleteReviewedActionError("");
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/errors/reviewed`, { method: "DELETE" });
+      if (!res.ok) {
+        setDeleteReviewedActionError(`Error al eliminar revisados (${res.status})`);
+        return;
+      }
+      const payload = await res.json().catch(() => null);
+      if (payload?.ok !== true) {
+        setDeleteReviewedActionError("Error al eliminar revisados");
+        return;
+      }
+      await fetchErrors();
+    } catch (err) {
+      setDeleteReviewedActionError("Error al eliminar revisados");
+    } finally {
+      setDeletingReviewed(false);
+    }
+  };
+
+  const handleDeleteAllErrors = async () => {
+    const confirmText = window.prompt(
+      "Acción irreversible.\n\nEscribí BORRAR TODO para confirmar la eliminación de TODOS los errores:"
+    );
+    if (confirmText !== "BORRAR TODO") return;
+
+    const ok = window.confirm("Última confirmación: ¿seguro que querés borrar TODOS los errores?");
+    if (!ok) return;
+
+    setDeletingAll(true);
+    setDeleteAllActionError("");
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/errors/delete-all`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirm: "DELETE_ALL_ERRORS" }),
+      });
+      if (!res.ok) {
+        setDeleteAllActionError(`Error al eliminar todo (${res.status})`);
+        return;
+      }
+      const payload = await res.json().catch(() => null);
+      if (payload?.ok !== true) {
+        setDeleteAllActionError("Error al eliminar todo");
+        return;
+      }
+      await fetchErrors();
+    } catch (err) {
+      setDeleteAllActionError("Error al eliminar todo");
+    } finally {
+      setDeletingAll(false);
+    }
+  };
+
   useEffect(() => {
     const controller = new AbortController();
     fetchErrors({ signal: controller.signal });
@@ -322,9 +420,13 @@ export default function App() {
       const id = item?.id || "-";
       const type = item?.error_type || "-";
       const description = item?.description || "-";
+      const screen = item?.screen || "-";
       const appVersion = item?.app_version || "-";
-      const device = item?.device_name || item?.device_hash || "-";
+      const androidVersion = item?.android_version || "-";
+      const deviceName = item?.device_name || "-";
       const deviceHash = item?.device_hash || "-";
+      const country = item?.country || "-";
+      const source = item?.source || "-";
       const status =
         item?.status === "pending"
           ? "Pendiente"
@@ -333,9 +435,25 @@ export default function App() {
             : item?.status === "resolved"
               ? "Resuelto"
               : item?.status || "-";
-      const date = item?.created_at || "-";
+      const createdAt = item?.created_at || "-";
+      const userEmail = item?.user_email || "-";
 
-      return { rawId, id, type, description, appVersion, device, deviceHash, status, date };
+      return {
+        rawId,
+        id,
+        type,
+        description,
+        screen,
+        appVersion,
+        androidVersion,
+        deviceName,
+        country,
+        source,
+        status,
+        createdAt,
+        deviceHash,
+        userEmail,
+      };
     });
   }, [errorReports]);
 
@@ -365,7 +483,7 @@ export default function App() {
 
       const matchSearch =
         q === "" ||
-        e.device?.toLowerCase().includes(q) ||
+        e.deviceName?.toLowerCase().includes(q) ||
         e.appVersion?.toLowerCase().includes(q) ||
         e.type?.toLowerCase().includes(q);
 
@@ -404,6 +522,7 @@ export default function App() {
   const errorStats = useMemo(() => {
     const total = errorRows.length;
     const pending = errorRows.filter((e) => e.status === "Pendiente").length;
+    const reviewed = errorRows.filter((e) => e.status === "Revisado").length;
 
     const typeCounts = new Map();
     const versionCounts = new Map();
@@ -432,6 +551,7 @@ export default function App() {
     return {
       total,
       pending,
+      reviewed,
       mostFrequentType,
       mostFrequentTypeCount,
       mostConflictiveVersion,
@@ -684,6 +804,28 @@ export default function App() {
                     />
                   </div>
                 </div>
+
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
+                  <button
+                    className="secondary-btn"
+                    disabled={deletingReviewed || deletingAll || loadingErrors || errorStats.reviewed === 0}
+                    onClick={handleDeleteReviewedErrors}
+                  >
+                    {deletingReviewed ? "Eliminando revisados..." : `Eliminar revisados (${errorStats.reviewed})`}
+                  </button>
+                  <button
+                    className="secondary-btn"
+                    disabled={deletingReviewed || deletingAll || loadingErrors || errorStats.total === 0}
+                    onClick={handleDeleteAllErrors}
+                  >
+                    {deletingAll ? "Eliminando todo..." : "Eliminar todo (irreversible)"}
+                  </button>
+                </div>
+
+                {!!deleteReviewedActionError && <p className="muted">{deleteReviewedActionError}</p>}
+                {!!deleteAllActionError && <p className="muted">{deleteAllActionError}</p>}
+                {!!deleteErrorActionError && <p className="muted">{deleteErrorActionError}</p>}
+
                 {loadingErrors ? (
                   <p className="muted">Cargando errores...</p>
                 ) : errorsError ? (
@@ -697,9 +839,16 @@ export default function App() {
                         <tr>
                           <th>ID</th>
                           <th>Tipo</th>
+                          <th>Descripción</th>
+                          <th>Pantalla</th>
                           <th>Versión</th>
+                          <th>Android</th>
                           <th>Dispositivo</th>
+                          <th>País</th>
+                          <th>Fuente</th>
                           <th>Estado</th>
+                          <th>Fecha</th>
+                          <th>Acción</th>
                           <th></th>
                         </tr>
                       </thead>
@@ -708,10 +857,31 @@ export default function App() {
                           <tr key={`${item.id}-${index}`}>
                             <td>{item.id}</td>
                             <td>{item.type}</td>
+                            <td>{item.description}</td>
+                            <td>{item.screen}</td>
                             <td>{item.appVersion}</td>
-                            <td>{item.device}</td>
+                            <td>{item.androidVersion}</td>
+                            <td>{item.deviceName}</td>
+                            <td>{item.country}</td>
+                            <td>{item.source}</td>
                             <td>
                               <span className={getBadgeClass(item.status)}>{item.status}</span>
+                            </td>
+                            <td>{item.createdAt}</td>
+                            <td>
+                              <button
+                                className="ghost-btn"
+                                disabled={
+                                  !item.rawId ||
+                                  deletingErrorId === item.rawId ||
+                                  deletingReviewed ||
+                                  deletingAll ||
+                                  loadingErrors
+                                }
+                                onClick={() => handleDeleteError(item.rawId)}
+                              >
+                                {deletingErrorId === item.rawId ? "Eliminando..." : "Eliminar"}
+                              </button>
                             </td>
                             <td>
                               <button
@@ -748,20 +918,40 @@ export default function App() {
 
                     <div className="detail-grid">
                       <div className="detail-box">
-                        <span>Usuario</span>
-                        <strong>-</strong>
+                        <span>Email</span>
+                        <strong>{selectedError.userEmail || "-"}</strong>
                       </div>
                       <div className="detail-box">
                         <span>Dispositivo</span>
-                        <strong>{selectedError.device}</strong>
+                        <strong>{selectedError.deviceName}</strong>
                       </div>
                       <div className="detail-box">
                         <span>Versión</span>
                         <strong>{selectedError.appVersion}</strong>
                       </div>
                       <div className="detail-box">
+                        <span>Android</span>
+                        <strong>{selectedError.androidVersion}</strong>
+                      </div>
+                      <div className="detail-box">
+                        <span>Pantalla</span>
+                        <strong>{selectedError.screen}</strong>
+                      </div>
+                      <div className="detail-box">
+                        <span>País</span>
+                        <strong>{selectedError.country}</strong>
+                      </div>
+                      <div className="detail-box">
+                        <span>Fuente</span>
+                        <strong>{selectedError.source}</strong>
+                      </div>
+                      <div className="detail-box">
+                        <span>Device hash</span>
+                        <strong>{selectedError.deviceHash}</strong>
+                      </div>
+                      <div className="detail-box">
                         <span>Fecha</span>
-                        <strong>{selectedError.date}</strong>
+                        <strong>{selectedError.createdAt}</strong>
                       </div>
                     </div>
 
@@ -772,11 +962,7 @@ export default function App() {
 
                     <div className="detail-section">
                       <p className="detail-label">Logs resumidos</p>
-                      <div className="log-box">
-                        {selectedError.deviceHash && selectedError.deviceHash !== "-"
-                          ? selectedError.deviceHash
-                          : "Sin logs"}
-                      </div>
+                      <div className="log-box">Sin logs</div>
                     </div>
 
                     {!!reviewErrorActionError && <p className="muted">{reviewErrorActionError}</p>}
