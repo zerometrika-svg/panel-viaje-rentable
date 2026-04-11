@@ -96,7 +96,15 @@ function SectionTitle({ title, subtitle }) {
 }
 
 export default function App() {
-  const [tab, setTab] = useState("inicio");
+  const [tab, setTab] = useState(() => {
+    try {
+      const saved = window.localStorage.getItem("vr_admin_tab");
+      const validTabs = new Set(["inicio", "errores", "licencias", "dispositivos", "demos", "versiones"]);
+      return validTabs.has(saved) ? saved : "inicio";
+    } catch {
+      return "inicio";
+    }
+  });
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
   const [filterType, setFilterType] = useState("all");
@@ -128,6 +136,14 @@ export default function App() {
   const [copyDeviceError, setCopyDeviceError] = useState("");
   const copyDeviceTimeoutRef = useRef(0);
   const copyDeviceErrorTimeoutRef = useRef(0);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("vr_admin_tab", tab);
+    } catch {
+      // ignore
+    }
+  }, [tab]);
 
   const fetchErrors = async ({ signal } = {}) => {
     setLoadingErrors(true);
