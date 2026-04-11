@@ -95,6 +95,8 @@ function SectionTitle({ title, subtitle }) {
 export default function App() {
   const [tab, setTab] = useState("errores");
   const [search, setSearch] = useState("");
+  const [filterStatus, setFilterStatus] = useState("all");
+  const [filterType, setFilterType] = useState("all");
   const [selectedErrorId, setSelectedErrorId] = useState("");
 
   const [errorReports, setErrorReports] = useState([]);
@@ -337,16 +339,47 @@ export default function App() {
     });
   }, [errorReports]);
 
+  const errorTypeOptions = useMemo(() => {
+    const unique = new Set();
+    for (const row of errorRows) {
+      if (row?.type && row.type !== "-") unique.add(row.type);
+    }
+    return Array.from(unique).sort((a, b) => a.localeCompare(b));
+  }, [errorRows]);
+
+  useEffect(() => {
+    if (filterType === "all") return;
+    if (errorTypeOptions.includes(filterType)) return;
+    setFilterType("all");
+  }, [errorTypeOptions, filterType]);
+
   const filteredErrors = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return errorRows;
-    return errorRows.filter((item) =>
-      [item.id, item.type, item.device, item.appVersion, item.status]
-        .join(" ")
-        .toLowerCase()
-        .includes(q)
-    );
-  }, [search, errorRows]);
+    return errorRows.filter((e) => {
+      const matchStatus =
+        filterStatus === "all" ||
+        (filterStatus === "pending" && e.status === "Pendiente") ||
+        (filterStatus === "reviewed" && e.status === "Revisado");
+
+      const matchType = filterType === "all" || e.type === filterType;
+
+      const matchSearch =
+        q === "" ||
+        e.device?.toLowerCase().includes(q) ||
+        e.appVersion?.toLowerCase().includes(q) ||
+        e.type?.toLowerCase().includes(q);
+
+      return matchStatus && matchType && matchSearch;
+    });
+  }, [errorRows, filterStatus, filterType, search]);
+
+  useEffect(() => {
+    if (filteredErrors.length === 0) return;
+    const exists = filteredErrors.some((row) => row.rawId === selectedErrorId || row.id === selectedErrorId);
+    if (exists) return;
+    const first = filteredErrors[0];
+    setSelectedErrorId(first.rawId ? String(first.rawId) : String(first.id));
+  }, [filteredErrors, selectedErrorId]);
 
   useEffect(() => {
     if (errorRows.length === 0) {
@@ -367,6 +400,45 @@ export default function App() {
       null
     );
   }, [errorRows, selectedErrorId]);
+
+  const errorStats = useMemo(() => {
+    const total = errorRows.length;
+    const pending = errorRows.filter((e) => e.status === "Pendiente").length;
+
+    const typeCounts = new Map();
+    const versionCounts = new Map();
+
+    for (const e of errorRows) {
+      if (e?.type && e.type !== "-") {
+        typeCounts.set(e.type, (typeCounts.get(e.type) || 0) + 1);
+      }
+      if (e?.appVersion && e.appVersion !== "-") {
+        versionCounts.set(e.appVersion, (versionCounts.get(e.appVersion) || 0) + 1);
+      }
+    }
+
+    const topTypes = Array.from(typeCounts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([type, count]) => ({ type, count }));
+
+    const mostFrequentType = topTypes[0]?.type || "-";
+    const mostFrequentTypeCount = topTypes[0]?.count || 0;
+
+    const topVersions = Array.from(versionCounts.entries()).sort((a, b) => b[1] - a[1]);
+    const mostConflictiveVersion = topVersions[0]?.[0] || "-";
+    const mostConflictiveVersionCount = topVersions[0]?.[1] || 0;
+
+    return {
+      total,
+      pending,
+      mostFrequentType,
+      mostFrequentTypeCount,
+      mostConflictiveVersion,
+      mostConflictiveVersionCount,
+      topTypes,
+    };
+  }, [errorRows]);
 
   const licenseRows = useMemo(() => {
     return licenses.map((item) => {
@@ -436,15 +508,17 @@ export default function App() {
             </p>
           </div>
 
-          <div className="search-box">
-            <Search size={16} />
-            <input
-              type="text"
-              placeholder="Buscar error, versión, usuario o dispositivo"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-          </div>
+          {tab !== "errores" && (
+            <div className="search-box">
+              <Search size={16} />
+              <input
+                type="text"
+                placeholder="Buscar..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </div>
+          )}
         </div>
 
         <div className="metrics-grid">
@@ -520,9 +594,96 @@ export default function App() {
               subtitle="Acá detectás qué se rompió, en qué versión y en qué dispositivo. Sin adivinar."
             />
 
+            <div className="metrics-grid" style={{ marginBottom: 16 }}>
+              <MetricCard
+                title="Total errores"
+                value={String(errorStats.total)}
+                hint="En todos los registros cargados"
+                icon={AlertTriangle}
+              />
+              <MetricCard
+                title="Pendientes"
+                value={String(errorStats.pending)}
+                hint="Requieren revisión"
+                icon={AlertTriangle}
+              />
+              <MetricCard
+                title="Tipo más frecuente"
+                value={errorStats.mostFrequentType}
+                hint={
+                  errorStats.mostFrequentType === "-"
+                    ? "Sin datos"
+                    : `${errorStats.mostFrequentTypeCount} reportes`
+                }
+                icon={Search}
+              />
+              <MetricCard
+                title="Versión más conflictiva"
+                value={errorStats.mostConflictiveVersion}
+                hint={
+                  errorStats.mostConflictiveVersion === "-"
+                    ? "Sin datos"
+                    : `${errorStats.mostConflictiveVersionCount} reportes`
+                }
+                icon={GitBranch}
+              />
+            </div>
+
+            <div className="card" style={{ marginBottom: 16 }}>
+              <h3>Tipos más reportados</h3>
+              {errorStats.topTypes.length === 0 ? (
+                <p className="muted">Sin datos</p>
+              ) : (
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Tipo</th>
+                        <th>Cantidad</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {errorStats.topTypes.map((t) => (
+                        <tr key={t.type}>
+                          <td>{t.type}</td>
+                          <td>{t.count}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
             <div className="errors-grid">
               <div className="card">
                 <h3>Listado</h3>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", margin: "12px 0" }}>
+                  <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
+                    <option value="all">Todos</option>
+                    <option value="pending">Pendiente</option>
+                    <option value="reviewed">Revisado</option>
+                  </select>
+
+                  <select value={filterType} onChange={(e) => setFilterType(e.target.value)}>
+                    <option value="all">Todos los tipos</option>
+                    {errorTypeOptions.map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </select>
+
+                  <div className="search-box" style={{ flex: "1 1 260px" }}>
+                    <Search size={16} />
+                    <input
+                      type="text"
+                      placeholder="Buscar por tipo, versión o dispositivo"
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                    />
+                  </div>
+                </div>
                 {loadingErrors ? (
                   <p className="muted">Cargando errores...</p>
                 ) : errorsError ? (
