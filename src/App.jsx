@@ -1,11 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Search,
+  LayoutDashboard,
   AlertTriangle,
   KeyRound,
   Smartphone,
   FlaskConical,
   GitBranch,
+  Copy,
+  Bot,
   Eye
 } from "lucide-react";
 import "./App.css";
@@ -93,7 +96,7 @@ function SectionTitle({ title, subtitle }) {
 }
 
 export default function App() {
-  const [tab, setTab] = useState("errores");
+  const [tab, setTab] = useState("inicio");
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
   const [filterType, setFilterType] = useState("all");
@@ -121,6 +124,10 @@ export default function App() {
   const [devicesActionError, setDevicesActionError] = useState("");
   const [togglingLicenseId, setTogglingLicenseId] = useState("");
   const [togglingDeviceId, setTogglingDeviceId] = useState("");
+  const [copiedDeviceId, setCopiedDeviceId] = useState("");
+  const [copyDeviceError, setCopyDeviceError] = useState("");
+  const copyDeviceTimeoutRef = useRef(0);
+  const copyDeviceErrorTimeoutRef = useRef(0);
 
   const fetchErrors = async ({ signal } = {}) => {
     setLoadingErrors(true);
@@ -278,6 +285,36 @@ export default function App() {
       setDevicesActionError("Error al actualizar dispositivo");
     } finally {
       setTogglingDeviceId("");
+    }
+  };
+
+  const handleCopyDeviceId = async (value) => {
+    const text = value === null || value === undefined ? "" : String(value);
+    if (!text || text === "-") return;
+
+    setCopyDeviceError("");
+    try {
+      if (navigator?.clipboard?.writeText && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const el = document.createElement("textarea");
+        el.value = text;
+        el.setAttribute("readonly", "");
+        el.style.position = "absolute";
+        el.style.left = "-9999px";
+        document.body.appendChild(el);
+        el.select();
+        document.execCommand("copy");
+        document.body.removeChild(el);
+      }
+
+      setCopiedDeviceId(text);
+      window.clearTimeout(copyDeviceTimeoutRef.current);
+      copyDeviceTimeoutRef.current = window.setTimeout(() => setCopiedDeviceId(""), 1200);
+    } catch {
+      setCopyDeviceError("No se pudo copiar");
+      window.clearTimeout(copyDeviceErrorTimeoutRef.current);
+      copyDeviceErrorTimeoutRef.current = window.setTimeout(() => setCopyDeviceError(""), 1500);
     }
   };
 
@@ -600,6 +637,14 @@ export default function App() {
     });
   }, [devices]);
 
+  const dashboardStats = useMemo(() => {
+    const licensesActive = licenseRows.filter((l) => l.status === "Activa").length;
+    const devicesActive = deviceRows.filter((d) => d.state === "Activo").length;
+    const demosActive = demos.filter((d) => d.state === "Activa").length;
+    const currentVersion = versions.find((v) => v.state === "Actual")?.version || "-";
+    return { licensesActive, devicesActive, demosActive, currentVersion };
+  }, [licenseRows, deviceRows]);
+
   return (
     <div className="layout">
       <aside className="sidebar">
@@ -610,12 +655,48 @@ export default function App() {
         </p>
 
         <nav className="sidebar-nav">
-          <button className="nav-item active">Dashboard</button>
-          <button className="nav-item">Errores</button>
-          <button className="nav-item">Licencias</button>
-          <button className="nav-item">Dispositivos</button>
-          <button className="nav-item">Demos</button>
-          <button className="nav-item">Versiones</button>
+          <button
+            className={tab === "inicio" ? "nav-item active" : "nav-item"}
+            onClick={() => setTab("inicio")}
+          >
+            <LayoutDashboard size={16} style={{ marginRight: 10 }} />
+            Inicio
+          </button>
+          <button
+            className={tab === "errores" ? "nav-item active" : "nav-item"}
+            onClick={() => setTab("errores")}
+          >
+            <AlertTriangle size={16} style={{ marginRight: 10 }} />
+            Errores
+          </button>
+          <button
+            className={tab === "licencias" ? "nav-item active" : "nav-item"}
+            onClick={() => setTab("licencias")}
+          >
+            <KeyRound size={16} style={{ marginRight: 10 }} />
+            Licencias
+          </button>
+          <button
+            className={tab === "dispositivos" ? "nav-item active" : "nav-item"}
+            onClick={() => setTab("dispositivos")}
+          >
+            <Smartphone size={16} style={{ marginRight: 10 }} />
+            Dispositivos
+          </button>
+          <button
+            className={tab === "demos" ? "nav-item active" : "nav-item"}
+            onClick={() => setTab("demos")}
+          >
+            <FlaskConical size={16} style={{ marginRight: 10 }} />
+            Demos
+          </button>
+          <button
+            className={tab === "versiones" ? "nav-item active" : "nav-item"}
+            onClick={() => setTab("versiones")}
+          >
+            <GitBranch size={16} style={{ marginRight: 10 }} />
+            Versiones
+          </button>
         </nav>
       </aside>
 
@@ -623,12 +704,9 @@ export default function App() {
         <div className="topbar">
           <div>
             <h1 className="main-title">Viaje Rentable Admin</h1>
-            <p className="main-subtitle">
-              Acá ordenás el negocio y dejás de depender de pgAdmin para operar el día a día.
-            </p>
           </div>
 
-          {tab !== "errores" && (
+          {tab !== "errores" && tab !== "inicio" && (
             <div className="search-box">
               <Search size={16} />
               <input
@@ -641,191 +719,138 @@ export default function App() {
           )}
         </div>
 
-        <div className="metrics-grid">
-          <MetricCard
-            title="Errores pendientes"
-            value="8"
-            hint="Los que requieren revisión real"
-            icon={AlertTriangle}
-          />
-          <MetricCard
-            title="Licencias activas"
-            value="14"
-            hint="Usuarios hoy con acceso"
-            icon={KeyRound}
-          />
-          <MetricCard
-            title="Dispositivos activos"
-            value="11"
-            hint="Última conexión reciente"
-            icon={Smartphone}
-          />
-          <MetricCard
-            title="Demos activas"
-            value="3"
-            hint="Controlá quién está probando"
-            icon={FlaskConical}
-          />
-          <MetricCard
-            title="Versión actual"
-            value="1.0.8"
-            hint="La que debería dominar"
-            icon={GitBranch}
-          />
-        </div>
-
-        <div className="tabs">
-          <button
-            className={tab === "errores" ? "tab active-tab" : "tab"}
-            onClick={() => setTab("errores")}
-          >
-            Errores
-          </button>
-          <button
-            className={tab === "licencias" ? "tab active-tab" : "tab"}
-            onClick={() => setTab("licencias")}
-          >
-            Licencias
-          </button>
-          <button
-            className={tab === "dispositivos" ? "tab active-tab" : "tab"}
-            onClick={() => setTab("dispositivos")}
-          >
-            Dispositivos
-          </button>
-          <button
-            className={tab === "demos" ? "tab active-tab" : "tab"}
-            onClick={() => setTab("demos")}
-          >
-            Demos
-          </button>
-          <button
-            className={tab === "versiones" ? "tab active-tab" : "tab"}
-            onClick={() => setTab("versiones")}
-          >
-            Versiones
-          </button>
-        </div>
-
-        {tab === "errores" && (
-          <>
-            <SectionTitle
-              title="Errores reportados"
-              subtitle="Acá detectás qué se rompió, en qué versión y en qué dispositivo. Sin adivinar."
-            />
-
-            <div className="metrics-grid" style={{ marginBottom: 16 }}>
+        {tab === "inicio" && (
+          <div className="dashboard-center">
+            <SectionTitle title="Resumen" subtitle="" />
+            <div className="metrics-grid dashboard-grid">
               <MetricCard
-                title="Total errores"
-                value={String(errorStats.total)}
-                hint="En todos los registros cargados"
-                icon={AlertTriangle}
-              />
-              <MetricCard
-                title="Pendientes"
+                title="Errores pendientes"
                 value={String(errorStats.pending)}
                 hint="Requieren revisión"
                 icon={AlertTriangle}
               />
               <MetricCard
-                title="Tipo más frecuente"
-                value={errorStats.mostFrequentType}
-                hint={
-                  errorStats.mostFrequentType === "-"
-                    ? "Sin datos"
-                    : `${errorStats.mostFrequentTypeCount} reportes`
-                }
-                icon={Search}
+                title="Licencias activas"
+                value={String(dashboardStats.licensesActive)}
+                hint="Usuarios con acceso"
+                icon={KeyRound}
               />
               <MetricCard
-                title="Versión más conflictiva"
-                value={errorStats.mostConflictiveVersion}
-                hint={
-                  errorStats.mostConflictiveVersion === "-"
-                    ? "Sin datos"
-                    : `${errorStats.mostConflictiveVersionCount} reportes`
-                }
-                icon={GitBranch}
+                title="Dispositivos activos"
+                value={String(dashboardStats.devicesActive)}
+                hint="Estado activo"
+                icon={Smartphone}
+              />
+              <MetricCard
+                title="Demos activas"
+                value={String(dashboardStats.demosActive)}
+                hint="En curso"
+                icon={FlaskConical}
+              />
+              <MetricCard
+                title="Versión actual"
+                value={dashboardStats.currentVersion}
+                hint="Referencia"
+                icon={Bot}
               />
             </div>
+          </div>
+        )}
 
-            <div className="card" style={{ marginBottom: 16 }}>
-              <h3>Tipos más reportados</h3>
-              {errorStats.topTypes.length === 0 ? (
-                <p className="muted">Sin datos</p>
-              ) : (
-                <div className="table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Tipo</th>
-                        <th>Cantidad</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {errorStats.topTypes.map((t) => (
-                        <tr key={t.type}>
-                          <td>{t.type}</td>
-                          <td>{t.count}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+        {tab === "errores" && (
+          <>
+            <style>{`
+              .errors-compact .card { padding: 14px; }
+              .errors-compact .section-title { margin-bottom: 10px; }
+              .errors-compact .section-title h2 { font-size: 18px; }
+              .errors-compact .section-title p { margin-top: 4px; font-size: 12px; }
+              .errors-compact h3 { margin: 0 0 10px; font-size: 14px; }
+              .errors-compact .errors-grid { gap: 12px; }
+              .errors-compact table { font-size: 12.5px; }
+              .errors-compact th, .errors-compact td { padding: 8px 8px; }
+              .errors-compact .search-box { padding: 8px 10px; border-radius: 12px; border: 0; box-shadow: none; min-width: 0; }
+              .errors-compact .search-box:focus-within { border: 0; box-shadow: none; }
+              .errors-compact .search-box input { font-size: 13px; border: 0; outline: none; box-shadow: none; }
+              .errors-compact select { padding: 8px 10px; border-radius: 12px; border: 1px solid var(--border); font-size: 13px; background: var(--card); color: var(--text); }
+              .errors-compact .primary-btn, .errors-compact .secondary-btn, .errors-compact .ghost-btn { padding: 8px 12px; border-radius: 12px; font-size: 13px; }
+              .errors-compact .danger-btn { background: var(--danger); color: #fff; border: 1px solid var(--danger); }
+              .errors-compact .danger-btn:hover { background: var(--danger-hover); border-color: var(--danger-hover); }
+              .errors-compact .danger-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+              .errors-compact .detail-grid { margin: 12px 0; gap: 10px; }
+              .errors-compact .detail-box { padding: 10px; }
+              .errors-compact .detail-box span { font-size: 11px; }
+              .errors-compact .detail-box strong { font-size: 12.5px; }
+              .errors-compact .detail-section { margin-top: 10px; }
+              .errors-compact .detail-label { margin: 0 0 6px; }
+              .errors-compact .detail-content { font-size: 13px; }
+              .errors-compact .log-box { font-size: 12px; padding: 10px; }
+              .errors-compact .muted { font-size: 12px; }
+            `}</style>
+
+            <div className="errors-compact">
+            <SectionTitle
+              title="Errores reportados"
+              subtitle="Gestión"
+            />
+
+            <div className="card" style={{ marginBottom: 12 }}>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                <button
+                  className="primary-btn danger-btn"
+                  disabled={deletingReviewed || deletingAll || loadingErrors || errorStats.reviewed === 0}
+                  onClick={handleDeleteReviewedErrors}
+                >
+                  {deletingReviewed ? "Eliminando revisados..." : `Eliminar revisados (${errorStats.reviewed})`}
+                </button>
+
+                <button
+                  className="secondary-btn danger-btn"
+                  disabled={deletingReviewed || deletingAll || loadingErrors || errorStats.total === 0}
+                  onClick={handleDeleteAllErrors}
+                >
+                  {deletingAll ? "Eliminando todo..." : "Eliminar todo"}
+                </button>
+
+                <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
+                  <option value="all">Todos</option>
+                  <option value="pending">Pendiente</option>
+                  <option value="reviewed">Revisado</option>
+                </select>
+
+                <select value={filterType} onChange={(e) => setFilterType(e.target.value)}>
+                  <option value="all">Tipos</option>
+                  {errorTypeOptions.map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>
+
+                <div className="search-box" style={{ flex: "1 1 260px", minWidth: 220 }}>
+                  <Search size={16} />
+                  <input
+                    type="text"
+                    placeholder="Buscar"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                  />
                 </div>
-              )}
+              </div>
+
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 10 }}>
+                <p className="muted">Total: {errorStats.total}</p>
+                <p className="muted">Pendientes: {errorStats.pending}</p>
+                <p className="muted">Revisados: {errorStats.reviewed}</p>
+              </div>
+
+              {!!deleteReviewedActionError && <p className="muted">{deleteReviewedActionError}</p>}
+              {!!deleteAllActionError && <p className="muted">{deleteAllActionError}</p>}
+              {!!deleteErrorActionError && <p className="muted">{deleteErrorActionError}</p>}
             </div>
 
             <div className="errors-grid">
               <div className="card">
                 <h3>Listado</h3>
-                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", margin: "12px 0" }}>
-                  <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
-                    <option value="all">Todos</option>
-                    <option value="pending">Pendiente</option>
-                    <option value="reviewed">Revisado</option>
-                  </select>
-
-                  <select value={filterType} onChange={(e) => setFilterType(e.target.value)}>
-                    <option value="all">Todos los tipos</option>
-                    {errorTypeOptions.map((t) => (
-                      <option key={t} value={t}>
-                        {t}
-                      </option>
-                    ))}
-                  </select>
-
-                  <div className="search-box" style={{ flex: "1 1 260px" }}>
-                    <Search size={16} />
-                    <input
-                      type="text"
-                      placeholder="Buscar por tipo, versión o dispositivo"
-                      value={search}
-                      onChange={(e) => setSearch(e.target.value)}
-                    />
-                  </div>
-                </div>
-
-                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
-                  <button
-                    className="secondary-btn"
-                    disabled={deletingReviewed || deletingAll || loadingErrors || errorStats.reviewed === 0}
-                    onClick={handleDeleteReviewedErrors}
-                  >
-                    {deletingReviewed ? "Eliminando revisados..." : `Eliminar revisados (${errorStats.reviewed})`}
-                  </button>
-                  <button
-                    className="secondary-btn"
-                    disabled={deletingReviewed || deletingAll || loadingErrors || errorStats.total === 0}
-                    onClick={handleDeleteAllErrors}
-                  >
-                    {deletingAll ? "Eliminando todo..." : "Eliminar todo (irreversible)"}
-                  </button>
-                </div>
-
-                {!!deleteReviewedActionError && <p className="muted">{deleteReviewedActionError}</p>}
-                {!!deleteAllActionError && <p className="muted">{deleteAllActionError}</p>}
-                {!!deleteErrorActionError && <p className="muted">{deleteErrorActionError}</p>}
-
                 {loadingErrors ? (
                   <p className="muted">Cargando errores...</p>
                 ) : errorsError ? (
@@ -837,52 +862,32 @@ export default function App() {
                     <table>
                       <thead>
                         <tr>
-                          <th>ID</th>
                           <th>Tipo</th>
                           <th>Descripción</th>
-                          <th>Pantalla</th>
+                          <th>Screen</th>
                           <th>Versión</th>
-                          <th>Android</th>
                           <th>Dispositivo</th>
-                          <th>País</th>
-                          <th>Fuente</th>
                           <th>Estado</th>
                           <th>Fecha</th>
-                          <th>Acción</th>
                           <th></th>
                         </tr>
                       </thead>
                       <tbody>
                         {filteredErrors.map((item, index) => (
                           <tr key={`${item.id}-${index}`}>
-                            <td>{item.id}</td>
                             <td>{item.type}</td>
-                            <td>{item.description}</td>
+                            <td>
+                              {item.description && item.description !== "-" && item.description.length > 80
+                                ? `${item.description.slice(0, 80)}…`
+                                : item.description}
+                            </td>
                             <td>{item.screen}</td>
                             <td>{item.appVersion}</td>
-                            <td>{item.androidVersion}</td>
                             <td>{item.deviceName}</td>
-                            <td>{item.country}</td>
-                            <td>{item.source}</td>
                             <td>
                               <span className={getBadgeClass(item.status)}>{item.status}</span>
                             </td>
                             <td>{item.createdAt}</td>
-                            <td>
-                              <button
-                                className="ghost-btn"
-                                disabled={
-                                  !item.rawId ||
-                                  deletingErrorId === item.rawId ||
-                                  deletingReviewed ||
-                                  deletingAll ||
-                                  loadingErrors
-                                }
-                                onClick={() => handleDeleteError(item.rawId)}
-                              >
-                                {deletingErrorId === item.rawId ? "Eliminando..." : "Eliminar"}
-                              </button>
-                            </td>
                             <td>
                               <button
                                 className="ghost-btn"
@@ -910,17 +915,12 @@ export default function App() {
                   <>
                     <div className="detail-header">
                       <div>
-                        <p className="muted">{selectedError.id}</p>
                         <h3>{selectedError.type}</h3>
                       </div>
                       <span className={getBadgeClass(selectedError.status)}>{selectedError.status}</span>
                     </div>
 
                     <div className="detail-grid">
-                      <div className="detail-box">
-                        <span>Email</span>
-                        <strong>{selectedError.userEmail || "-"}</strong>
-                      </div>
                       <div className="detail-box">
                         <span>Dispositivo</span>
                         <strong>{selectedError.deviceName}</strong>
@@ -930,24 +930,8 @@ export default function App() {
                         <strong>{selectedError.appVersion}</strong>
                       </div>
                       <div className="detail-box">
-                        <span>Android</span>
-                        <strong>{selectedError.androidVersion}</strong>
-                      </div>
-                      <div className="detail-box">
                         <span>Pantalla</span>
                         <strong>{selectedError.screen}</strong>
-                      </div>
-                      <div className="detail-box">
-                        <span>País</span>
-                        <strong>{selectedError.country}</strong>
-                      </div>
-                      <div className="detail-box">
-                        <span>Fuente</span>
-                        <strong>{selectedError.source}</strong>
-                      </div>
-                      <div className="detail-box">
-                        <span>Device hash</span>
-                        <strong>{selectedError.deviceHash}</strong>
                       </div>
                       <div className="detail-box">
                         <span>Fecha</span>
@@ -958,6 +942,36 @@ export default function App() {
                     <div className="detail-section">
                       <p className="detail-label">Descripción</p>
                       <div className="detail-content">{selectedError.description}</div>
+                    </div>
+
+                    <div className="detail-section">
+                      <p className="detail-label">Detalles</p>
+                      <div className="table-wrap">
+                        <table>
+                          <tbody>
+                            <tr>
+                              <td className="muted">Device hash</td>
+                              <td>{selectedError.deviceHash}</td>
+                            </tr>
+                            <tr>
+                              <td className="muted">Source</td>
+                              <td>{selectedError.source}</td>
+                            </tr>
+                            <tr>
+                              <td className="muted">Android</td>
+                              <td>{selectedError.androidVersion}</td>
+                            </tr>
+                            <tr>
+                              <td className="muted">Country</td>
+                              <td>{selectedError.country}</td>
+                            </tr>
+                            <tr>
+                              <td className="muted">User email</td>
+                              <td>{selectedError.userEmail || "-"}</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
 
                     <div className="detail-section">
@@ -983,11 +997,24 @@ export default function App() {
                             ? "Procesando..."
                             : "Marcar revisado"}
                       </button>
-                      <button className="secondary-btn">Marcar resuelto</button>
+                      <button
+                        className="secondary-btn danger-btn"
+                        disabled={
+                          !selectedError.rawId ||
+                          deletingErrorId === selectedError.rawId ||
+                          deletingReviewed ||
+                          deletingAll ||
+                          loadingErrors
+                        }
+                        onClick={() => handleDeleteError(selectedError.rawId)}
+                      >
+                        {deletingErrorId === selectedError.rawId ? "Eliminando..." : "Eliminar"}
+                      </button>
                     </div>
                   </>
                 )}
               </div>
+            </div>
             </div>
           </>
         )}
@@ -1069,6 +1096,7 @@ export default function App() {
             />
             <div className="card">
               {!!devicesActionError && <p className="muted">{devicesActionError}</p>}
+              {!!copyDeviceError && <p className="muted">{copyDeviceError}</p>}
               {loadingDevices ? (
                 <p className="muted">Cargando dispositivos...</p>
               ) : devicesError ? (
@@ -1104,7 +1132,23 @@ export default function App() {
 
                         return (
                           <tr key={item.rawId ? item.rawId : `${item.id}-${index}`}>
-                            <td>{item.id}</td>
+                            <td>
+                              <div className="id-cell">
+                                <span className="truncate-id mono" title={item.id}>
+                                  {item.id}
+                                </span>
+                                <button
+                                  type="button"
+                                  className="ghost-btn icon-btn"
+                                  title="Copiar"
+                                  disabled={!item.id || item.id === "-"}
+                                  onClick={() => handleCopyDeviceId(item.id)}
+                                >
+                                  <Copy size={16} />
+                                </button>
+                                {copiedDeviceId === item.id && <span className="muted">Copiado</span>}
+                              </div>
+                            </td>
                             <td>{item.user}</td>
                             <td>{item.model}</td>
                             <td>{item.android}</td>
