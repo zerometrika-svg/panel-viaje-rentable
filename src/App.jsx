@@ -636,7 +636,7 @@ export default function App() {
     return devices.map((item) => {
       const rawId = item?.id || item?.device_hash || item?.device_id || "";
       const id = item?.device_hash || item?.id || "-";
-      const user = item?.email || item?.user_email || item?.user_id || "-";
+      const user = "-";
       const model = item?.device_name || item?.model || "-";
       const android = item?.android_version || item?.android || "-";
       const version = item?.app_version || item?.version || "-";
@@ -801,6 +801,13 @@ export default function App() {
               .errors-compact .detail-content { font-size: 13px; }
               .errors-compact .log-box { font-size: 12px; padding: 10px; }
               .errors-compact .muted { font-size: 12px; }
+              .errors-compact .errors-metrics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin-top: 10px; }
+              .errors-compact .metric-card { padding: 12px; border-radius: 16px; }
+              .errors-compact .metric-card h3 { font-size: 18px; margin: 6px 0 0; }
+              .errors-compact .metric-card .hint { margin-top: 6px; font-size: 11.5px; }
+              .errors-compact .metric-card .icon-box { padding: 10px; border-radius: 14px; }
+              .errors-compact .errors-top-list { margin: 6px 0 0; padding-left: 16px; }
+              .errors-compact .errors-top-list li { margin: 3px 0; font-size: 12.5px; }
             `}</style>
 
             <div className="errors-compact">
@@ -853,10 +860,52 @@ export default function App() {
                 </div>
               </div>
 
-              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 10 }}>
-                <p className="muted">Total: {errorStats.total}</p>
-                <p className="muted">Pendientes: {errorStats.pending}</p>
-                <p className="muted">Revisados: {errorStats.reviewed}</p>
+              <div className="errors-metrics-grid">
+                <MetricCard
+                  title="Total"
+                  value={String(errorStats.total)}
+                  hint="Reportes"
+                  icon={AlertTriangle}
+                />
+                <MetricCard
+                  title="Pendientes"
+                  value={String(errorStats.pending)}
+                  hint="Sin revisar"
+                  icon={GitBranch}
+                />
+                <MetricCard
+                  title="Revisados"
+                  value={String(errorStats.reviewed)}
+                  hint="Marcados"
+                  icon={Eye}
+                />
+                <MetricCard
+                  title="Más frecuente"
+                  value={errorStats.mostFrequentType}
+                  hint={`${errorStats.mostFrequentTypeCount} reportes`}
+                  icon={Bot}
+                />
+                <div className="card metric-card">
+                  <div>
+                    <p className="muted">Top 3 errores</p>
+                    {errorStats.topTypes.length === 0 ? (
+                      <h3>-</h3>
+                    ) : (
+                      <ol className="errors-top-list">
+                        {errorStats.topTypes.map((item) => (
+                          <li key={item.type}>
+                            <span className="mono">{item.type}</span>{" "}
+                            <span className="muted">({item.count})</span>
+                          </li>
+                        ))}
+                      </ol>
+                    )}
+                    <p className="hint">Por error_type</p>
+                  </div>
+                  <div className="icon-box">
+                    <LayoutDashboard size={20} />
+                  </div>
+                </div>
               </div>
 
               {!!deleteReviewedActionError && <p className="muted">{deleteReviewedActionError}</p>}
@@ -1057,7 +1106,9 @@ export default function App() {
                         <th>Código</th>
                         <th>Plan</th>
                         <th>Usuario</th>
-                        <th>Dispositivo</th>
+                        <th>Modelo</th>
+                        <th>Android</th>
+                        <th>VersiÃ³n</th>
                         <th>Vence</th>
                         <th>Estado</th>
                         <th>Acción</th>
@@ -1126,9 +1177,7 @@ export default function App() {
                       <tr>
                         <th>Device ID</th>
                         <th>Usuario</th>
-                        <th>Modelo</th>
-                        <th>Android</th>
-                        <th>Versión</th>
+                        <th>Dispositivo</th>
                         <th>Licencia</th>
                         <th>Última conexión</th>
                         <th>Estado</th>
