@@ -353,7 +353,7 @@ export default function App() {
     setDeletingReviewed(true);
     setDeleteReviewedActionError("");
     try {
-      const res = await fetch(`${API_BASE_URL}/admin/errors/reviewed`, { method: "DELETE" });
+      const res = await fetch(new URL("/admin/errors/reviewed", API_BASE_URL), { method: "DELETE" });
       if (!res.ok) {
         setDeleteReviewedActionError(`Error al eliminar revisados (${res.status})`);
         return;
