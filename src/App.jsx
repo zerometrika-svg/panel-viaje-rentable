@@ -12,42 +12,6 @@ import "./App.css";
 
 const API_BASE_URL = "https://viaje-rentable-api.onrender.com";
 
-const errorReports = [
-  {
-    id: "ERR-1024",
-    date: "2026-04-10 20:12",
-    type: "No detectó viaje",
-    user: "cristian@demo.com",
-    device: "Samsung A15",
-    appVersion: "1.0.8",
-    status: "Pendiente",
-    description: "La oferta apareció pero la app no reaccionó.",
-    logs: "viaje_detectado=false | overlay=activo | servicio=activo",
-  },
-  {
-    id: "ERR-1023",
-    date: "2026-04-10 18:44",
-    type: "Historial duplicado",
-    user: "usuario2@demo.com",
-    device: "Moto G54",
-    appVersion: "1.0.7",
-    status: "Revisado",
-    description: "Entré a Inicio y aparecieron viajes fantasma.",
-    logs: "inicio_refresh=true | legacy_merge=true | duplicates=15",
-  },
-  {
-    id: "ERR-1022",
-    date: "2026-04-09 23:06",
-    type: "Overlay no visible",
-    user: "usuario3@demo.com",
-    device: "Samsung A12",
-    appVersion: "1.0.8",
-    status: "Resuelto",
-    description: "Después de bloquear y desbloquear, desapareció la burbuja.",
-    logs: "overlay_permission=true | battery_opt=false | service_restart=false",
-  },
-];
-
 const demos = [
   {
     device: "device_abc_123",
@@ -131,7 +95,13 @@ function SectionTitle({ title, subtitle }) {
 export default function App() {
   const [tab, setTab] = useState("errores");
   const [search, setSearch] = useState("");
-  const [selectedError, setSelectedError] = useState(errorReports[0]);
+  const [selectedErrorId, setSelectedErrorId] = useState("");
+
+  const [errorReports, setErrorReports] = useState([]);
+  const [loadingErrors, setLoadingErrors] = useState(false);
+  const [errorsError, setErrorsError] = useState("");
+  const [reviewingErrorId, setReviewingErrorId] = useState("");
+  const [reviewErrorActionError, setReviewErrorActionError] = useState("");
 
   const [licenses, setLicenses] = useState([]);
   const [devices, setDevices] = useState([]);
@@ -143,6 +113,39 @@ export default function App() {
   const [devicesActionError, setDevicesActionError] = useState("");
   const [togglingLicenseId, setTogglingLicenseId] = useState("");
   const [togglingDeviceId, setTogglingDeviceId] = useState("");
+
+  const fetchErrors = async ({ signal } = {}) => {
+    setLoadingErrors(true);
+    setErrorsError("");
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/errors`, { signal });
+      if (!res.ok) {
+        setErrorReports([]);
+        setErrorsError(`Error al cargar errores (${res.status})`);
+        return;
+      }
+
+      const payload = await res.json();
+      if (payload?.ok !== true) {
+        setErrorReports([]);
+        setErrorsError("Error al cargar errores");
+        return;
+      }
+
+      const data = Array.isArray(payload.data) ? payload.data : [];
+      setErrorReports(data);
+      if (!Array.isArray(payload.data)) {
+        setErrorsError("Error al cargar errores");
+      }
+    } catch (err) {
+      if (err?.name !== "AbortError") {
+        setErrorReports([]);
+        setErrorsError("Error al cargar errores");
+      }
+    } finally {
+      setLoadingErrors(false);
+    }
+  };
 
   const fetchLicenses = async ({ signal } = {}) => {
     setLoadingLicenses(true);
@@ -270,24 +273,100 @@ export default function App() {
     }
   };
 
+  const handleReviewError = async (id) => {
+    if (id === null || id === undefined || id === "") {
+      setReviewErrorActionError("No se pudo ejecutar la acción (id inválido)");
+      return;
+    }
+
+    const normalizedId = String(id);
+    setReviewingErrorId(normalizedId);
+    setReviewErrorActionError("");
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/admin/errors/${encodeURIComponent(normalizedId)}/review`,
+        { method: "POST" }
+      );
+      if (!res.ok) {
+        setReviewErrorActionError(`Error al marcar revisado (${res.status})`);
+        return;
+      }
+      const payload = await res.json().catch(() => null);
+      if (payload?.ok !== true) {
+        setReviewErrorActionError("Error al marcar revisado");
+        return;
+      }
+      await fetchErrors();
+      setSelectedErrorId(normalizedId);
+    } catch (err) {
+      setReviewErrorActionError("Error al marcar revisado");
+    } finally {
+      setReviewingErrorId("");
+    }
+  };
+
   useEffect(() => {
     const controller = new AbortController();
+    fetchErrors({ signal: controller.signal });
     fetchLicenses({ signal: controller.signal });
     fetchDevices({ signal: controller.signal });
     return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const errorRows = useMemo(() => {
+    return errorReports.map((item) => {
+      const rawId = item?.id ? String(item.id) : "";
+      const id = item?.id || "-";
+      const type = item?.error_type || "-";
+      const description = item?.description || "-";
+      const appVersion = item?.app_version || "-";
+      const device = item?.device_name || item?.device_hash || "-";
+      const deviceHash = item?.device_hash || "-";
+      const status =
+        item?.status === "pending"
+          ? "Pendiente"
+          : item?.status === "reviewed"
+            ? "Revisado"
+            : item?.status === "resolved"
+              ? "Resuelto"
+              : item?.status || "-";
+      const date = item?.created_at || "-";
+
+      return { rawId, id, type, description, appVersion, device, deviceHash, status, date };
+    });
+  }, [errorReports]);
+
   const filteredErrors = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return errorReports;
-    return errorReports.filter((item) =>
-      [item.id, item.type, item.user, item.device, item.appVersion, item.status]
+    if (!q) return errorRows;
+    return errorRows.filter((item) =>
+      [item.id, item.type, item.device, item.appVersion, item.status]
         .join(" ")
         .toLowerCase()
         .includes(q)
     );
-  }, [search]);
+  }, [search, errorRows]);
+
+  useEffect(() => {
+    if (errorRows.length === 0) {
+      if (selectedErrorId) setSelectedErrorId("");
+      return;
+    }
+    const exists = errorRows.some((row) => row.rawId === selectedErrorId || row.id === selectedErrorId);
+    if (!selectedErrorId || !exists) {
+      const first = errorRows[0];
+      setSelectedErrorId(first.rawId ? String(first.rawId) : String(first.id));
+    }
+  }, [errorRows, selectedErrorId]);
+
+  const selectedError = useMemo(() => {
+    return (
+      errorRows.find((row) => row.rawId === selectedErrorId) ||
+      errorRows.find((row) => row.id === selectedErrorId) ||
+      null
+    );
+  }, [errorRows, selectedErrorId]);
 
   const licenseRows = useMemo(() => {
     return licenses.map((item) => {
@@ -444,82 +523,123 @@ export default function App() {
             <div className="errors-grid">
               <div className="card">
                 <h3>Listado</h3>
-                <div className="table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>ID</th>
-                        <th>Tipo</th>
-                        <th>Versión</th>
-                        <th>Dispositivo</th>
-                        <th>Estado</th>
-                        <th></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredErrors.map((item) => (
-                        <tr key={item.id}>
-                          <td>{item.id}</td>
-                          <td>{item.type}</td>
-                          <td>{item.appVersion}</td>
-                          <td>{item.device}</td>
-                          <td>
-                            <span className={getBadgeClass(item.status)}>{item.status}</span>
-                          </td>
-                          <td>
-                            <button className="ghost-btn" onClick={() => setSelectedError(item)}>
-                              <Eye size={14} /> Ver
-                            </button>
-                          </td>
+                {loadingErrors ? (
+                  <p className="muted">Cargando errores...</p>
+                ) : errorsError ? (
+                  <p className="muted">{errorsError}</p>
+                ) : errorRows.length === 0 ? (
+                  <p className="muted">No hay errores</p>
+                ) : (
+                  <div className="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>ID</th>
+                          <th>Tipo</th>
+                          <th>Versión</th>
+                          <th>Dispositivo</th>
+                          <th>Estado</th>
+                          <th></th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                      </thead>
+                      <tbody>
+                        {filteredErrors.map((item, index) => (
+                          <tr key={`${item.id}-${index}`}>
+                            <td>{item.id}</td>
+                            <td>{item.type}</td>
+                            <td>{item.appVersion}</td>
+                            <td>{item.device}</td>
+                            <td>
+                              <span className={getBadgeClass(item.status)}>{item.status}</span>
+                            </td>
+                            <td>
+                              <button
+                                className="ghost-btn"
+                                onClick={() => setSelectedErrorId(item.rawId ? String(item.rawId) : String(item.id))}
+                              >
+                                <Eye size={14} /> Ver
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
 
               <div className="card">
-                <div className="detail-header">
-                  <div>
-                    <p className="muted">{selectedError.id}</p>
-                    <h3>{selectedError.type}</h3>
-                  </div>
-                  <span className={getBadgeClass(selectedError.status)}>{selectedError.status}</span>
-                </div>
+                {loadingErrors ? (
+                  <p className="muted">Cargando errores...</p>
+                ) : errorsError ? (
+                  <p className="muted">{errorsError}</p>
+                ) : !selectedError ? (
+                  <p className="muted">No hay errores</p>
+                ) : (
+                  <>
+                    <div className="detail-header">
+                      <div>
+                        <p className="muted">{selectedError.id}</p>
+                        <h3>{selectedError.type}</h3>
+                      </div>
+                      <span className={getBadgeClass(selectedError.status)}>{selectedError.status}</span>
+                    </div>
 
-                <div className="detail-grid">
-                  <div className="detail-box">
-                    <span>Usuario</span>
-                    <strong>{selectedError.user}</strong>
-                  </div>
-                  <div className="detail-box">
-                    <span>Dispositivo</span>
-                    <strong>{selectedError.device}</strong>
-                  </div>
-                  <div className="detail-box">
-                    <span>Versión</span>
-                    <strong>{selectedError.appVersion}</strong>
-                  </div>
-                  <div className="detail-box">
-                    <span>Fecha</span>
-                    <strong>{selectedError.date}</strong>
-                  </div>
-                </div>
+                    <div className="detail-grid">
+                      <div className="detail-box">
+                        <span>Usuario</span>
+                        <strong>-</strong>
+                      </div>
+                      <div className="detail-box">
+                        <span>Dispositivo</span>
+                        <strong>{selectedError.device}</strong>
+                      </div>
+                      <div className="detail-box">
+                        <span>Versión</span>
+                        <strong>{selectedError.appVersion}</strong>
+                      </div>
+                      <div className="detail-box">
+                        <span>Fecha</span>
+                        <strong>{selectedError.date}</strong>
+                      </div>
+                    </div>
 
-                <div className="detail-section">
-                  <p className="detail-label">Descripción</p>
-                  <div className="detail-content">{selectedError.description}</div>
-                </div>
+                    <div className="detail-section">
+                      <p className="detail-label">Descripción</p>
+                      <div className="detail-content">{selectedError.description}</div>
+                    </div>
 
-                <div className="detail-section">
-                  <p className="detail-label">Logs resumidos</p>
-                  <div className="log-box">{selectedError.logs}</div>
-                </div>
+                    <div className="detail-section">
+                      <p className="detail-label">Logs resumidos</p>
+                      <div className="log-box">
+                        {selectedError.deviceHash && selectedError.deviceHash !== "-"
+                          ? selectedError.deviceHash
+                          : "Sin logs"}
+                      </div>
+                    </div>
 
-                <div className="action-row">
-                  <button className="primary-btn">Marcar revisado</button>
-                  <button className="secondary-btn">Marcar resuelto</button>
-                </div>
+                    {!!reviewErrorActionError && <p className="muted">{reviewErrorActionError}</p>}
+                    <div className="action-row">
+                      <button
+                        className="primary-btn"
+                        disabled={
+                          selectedError.status !== "Pendiente" ||
+                          !selectedError.rawId ||
+                          reviewingErrorId === selectedError.rawId ||
+                          loadingErrors
+                        }
+                        onClick={() => handleReviewError(selectedError.rawId)}
+                      >
+                        {selectedError.status === "Revisado"
+                          ? "Ya revisado"
+                          : reviewingErrorId === selectedError.rawId
+                            ? "Procesando..."
+                            : "Marcar revisado"}
+                      </button>
+                      <button className="secondary-btn">Marcar resuelto</button>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           </>
