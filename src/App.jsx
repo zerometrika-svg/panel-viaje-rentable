@@ -176,18 +176,21 @@ export default function App() {
   const [licenses, setLicenses] = useState([]);
   const [devices, setDevices] = useState([]);
   const [demos, setDemos] = useState([]);
+  const [releases, setReleases] = useState([]);
   const [loadingLicenses, setLoadingLicenses] = useState(false);
   const [loadingDevices, setLoadingDevices] = useState(false);
   const [loadingDemos, setLoadingDemos] = useState(false);
+  const [loadingReleases, setLoadingReleases] = useState(false);
   const [licensesError, setLicensesError] = useState("");
   const [devicesError, setDevicesError] = useState("");
   const [demosError, setDemosError] = useState("");
+  const [releasesError, setReleasesError] = useState("");
   const [licensesActionError, setLicensesActionError] = useState("");
   const [devicesActionError, setDevicesActionError] = useState("");
   const [demosActionError, setDemosActionError] = useState("");
+  const [releasesActionError, setReleasesActionError] = useState("");
   const [togglingLicenseId, setTogglingLicenseId] = useState("");
   const [togglingDeviceId, setTogglingDeviceId] = useState("");
-  const [togglingDemoId, setTogglingDemoId] = useState("");
   const [copiedDeviceId, setCopiedDeviceId] = useState("");
   const [copyDeviceError, setCopyDeviceError] = useState("");
   const copyDeviceTimeoutRef = useRef(0);
@@ -198,6 +201,14 @@ export default function App() {
   const [demoStartedValue, setDemoStartedValue] = useState("");
   const [demoExactValue, setDemoExactValue] = useState("");
   const [savingDemoId, setSavingDemoId] = useState("");
+
+  const [creatingRelease, setCreatingRelease] = useState(false);
+  const [activatingReleaseId, setActivatingReleaseId] = useState("");
+  const [deletingReleaseId, setDeletingReleaseId] = useState("");
+  const [releaseNameValue, setReleaseNameValue] = useState("");
+  const [releaseCodeValue, setReleaseCodeValue] = useState("");
+  const [releaseApkUrlValue, setReleaseApkUrlValue] = useState("");
+  const [releaseMessageValue, setReleaseMessageValue] = useState("");
 
   useEffect(() => {
     try {
@@ -339,6 +350,39 @@ export default function App() {
     }
   };
 
+  const fetchReleases = async ({ signal } = {}) => {
+    setLoadingReleases(true);
+    setReleasesError("");
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/releases`, { signal });
+      if (!res.ok) {
+        setReleases([]);
+        setReleasesError(`Error al cargar releases (${res.status})`);
+        return;
+      }
+
+      const payload = await res.json();
+      if (payload?.ok !== true) {
+        setReleases([]);
+        setReleasesError("Error al cargar releases");
+        return;
+      }
+
+      const data = Array.isArray(payload.data) ? payload.data : [];
+      setReleases(data);
+      if (!Array.isArray(payload.data)) {
+        setReleasesError("Error al cargar releases");
+      }
+    } catch (err) {
+      if (err?.name !== "AbortError") {
+        setReleases([]);
+        setReleasesError("Error al cargar releases");
+      }
+    } finally {
+      setLoadingReleases(false);
+    }
+  };
+
   const handleToggleLicense = async (id) => {
     if (!id) {
       setLicensesActionError("No se pudo ejecutar la acción (id inválido)");
@@ -396,35 +440,6 @@ export default function App() {
       setDevicesActionError("Error al actualizar dispositivo");
     } finally {
       setTogglingDeviceId("");
-    }
-  };
-
-  const handleToggleDemo = async (id) => {
-    if (!id || id === "-") {
-      setDemosActionError("No se pudo ejecutar la acción (id inválido)");
-      return;
-    }
-
-    setTogglingDemoId(id);
-    setDemosActionError("");
-    try {
-      const res = await fetch(`${API_BASE_URL}/admin/demos/${encodeURIComponent(id)}/toggle`, {
-        method: "POST",
-      });
-      if (!res.ok) {
-        setDemosActionError(`Error al actualizar demo (${res.status})`);
-        return;
-      }
-      const payload = await res.json().catch(() => null);
-      if (payload?.ok !== true) {
-        setDemosActionError("Error al actualizar demo");
-        return;
-      }
-      await fetchDemos();
-    } catch {
-      setDemosActionError("Error al actualizar demo");
-    } finally {
-      setTogglingDemoId("");
     }
   };
 
@@ -588,6 +603,7 @@ export default function App() {
     fetchLicenses({ signal: controller.signal });
     fetchDevices({ signal: controller.signal });
     fetchDemos({ signal: controller.signal });
+    fetchReleases({ signal: controller.signal });
     return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -786,7 +802,7 @@ export default function App() {
 
   const demoRows = useMemo(() => {
     return demos.map((item) => {
-      const id = item?.id || item?.demo_id || item?.device_id || item?.device_hash || "-";
+      const id = item?.id || item?.device_id || item?.device_hash || "-";
       const deviceName = item?.device_name || "-";
       const startedAt = item?.demo_started_at || "-";
       const expiresAt = item?.demo_expires_at || "-";
@@ -803,6 +819,159 @@ export default function App() {
       return { id, deviceName, startedAt, expiresAt, status, rawStatus };
     });
   }, [demos]);
+
+  const releaseRows = useMemo(() => {
+    return releases.map((item) => {
+      const rawId = item?.id || item?.release_id || item?._id || "";
+      const id = rawId || "-";
+      const versionName = item?.version_name || item?.versionName || item?.version || "-";
+      const versionCode = item?.version_code ?? item?.versionCode ?? item?.code ?? "-";
+      const apkUrl = item?.apk_url || item?.apkUrl || item?.url || "-";
+      const message = item?.message || "-";
+      const createdAt = item?.created_at || item?.createdAt || "-";
+      const isActive =
+        typeof item?.is_active === "boolean"
+          ? item.is_active
+          : typeof item?.active === "boolean"
+            ? item.active
+            : item?.status === "active" || item?.status === "activa";
+
+      return {
+        rawId: rawId ? String(rawId) : "",
+        id,
+        versionName,
+        versionCode,
+        apkUrl,
+        message,
+        createdAt,
+        status: isActive ? "Activa" : "Inactiva",
+        isActive: !!isActive,
+      };
+    });
+  }, [releases]);
+
+  const activeRelease = useMemo(() => {
+    return releaseRows.find((row) => row.isActive) || null;
+  }, [releaseRows]);
+
+  const handleCreateRelease = async () => {
+    const versionName = releaseNameValue.trim();
+    const versionCodeRaw = releaseCodeValue.trim();
+    const apkUrl = releaseApkUrlValue.trim();
+    const message = releaseMessageValue.trim();
+
+    if (!versionName) {
+      setReleasesActionError("Ingresá version_name");
+      return;
+    }
+    if (!versionCodeRaw) {
+      setReleasesActionError("Ingresá version_code");
+      return;
+    }
+    if (!/^[0-9]+$/.test(versionCodeRaw)) {
+      setReleasesActionError("version_code debe ser numérico");
+      return;
+    }
+    if (!apkUrl) {
+      setReleasesActionError("Ingresá apk_url");
+      return;
+    }
+
+    setCreatingRelease(true);
+    setReleasesActionError("");
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/releases`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          version_name: versionName,
+          version_code: Number(versionCodeRaw),
+          apk_url: apkUrl,
+          message,
+        }),
+      });
+      if (!res.ok) {
+        setReleasesActionError(`Error al crear release (${res.status})`);
+        return;
+      }
+      const payload = await res.json().catch(() => null);
+      if (payload?.ok !== true) {
+        setReleasesActionError("Error al crear release");
+        return;
+      }
+      setReleaseNameValue("");
+      setReleaseCodeValue("");
+      setReleaseApkUrlValue("");
+      setReleaseMessageValue("");
+      await fetchReleases();
+    } catch {
+      setReleasesActionError("Error al crear release");
+    } finally {
+      setCreatingRelease(false);
+    }
+  };
+
+  const handleActivateRelease = async (row) => {
+    if (!row?.rawId) {
+      setReleasesActionError("No se pudo activar (id inválido)");
+      return;
+    }
+    if (row.isActive) return;
+
+    setActivatingReleaseId(row.rawId);
+    setReleasesActionError("");
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/releases/${encodeURIComponent(row.rawId)}/activate`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        setReleasesActionError(`Error al activar release (${res.status})`);
+        return;
+      }
+      const payload = await res.json().catch(() => null);
+      if (payload?.ok !== true) {
+        setReleasesActionError("Error al activar release");
+        return;
+      }
+      await fetchReleases();
+    } catch {
+      setReleasesActionError("Error al activar release");
+    } finally {
+      setActivatingReleaseId("");
+    }
+  };
+
+  const handleDeleteRelease = async (row) => {
+    if (!row?.rawId) {
+      setReleasesActionError("No se pudo eliminar (id inválido)");
+      return;
+    }
+
+    const ok = window.confirm(`¿Eliminar release ${row.versionName} (${row.versionCode})?`);
+    if (!ok) return;
+
+    setDeletingReleaseId(row.rawId);
+    setReleasesActionError("");
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/releases/${encodeURIComponent(row.rawId)}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        setReleasesActionError(`Error al eliminar release (${res.status})`);
+        return;
+      }
+      const payload = await res.json().catch(() => null);
+      if (payload?.ok !== true) {
+        setReleasesActionError("Error al eliminar release");
+        return;
+      }
+      await fetchReleases();
+    } catch {
+      setReleasesActionError("Error al eliminar release");
+    } finally {
+      setDeletingReleaseId("");
+    }
+  };
 
   const dashboardStats = useMemo(() => {
     const licensesActive = licenseRows.filter((l) => l.status === "Activa").length;
@@ -1499,25 +1668,21 @@ export default function App() {
                   <table className="demos-table">
                     <thead>
                       <tr>
-                        <th>Demo ID</th>
                         <th>Dispositivo</th>
                         <th>Inicio</th>
                         <th>Vence</th>
                         <th>Restante</th>
                         <th>Estado</th>
-                        <th>Acción</th>
+                        <th>Editar vencimiento</th>
                       </tr>
                     </thead>
                     <tbody>
                       {demoRows.map((row) => {
                         const remainingLabel = getRemainingLabel(row.expiresAt, nowTs);
-                        const isToggling = togglingDemoId === row.id;
                         const isSaving = savingDemoId === row.id;
-                        const nextLabel = row.status === "Activa" ? "Desactivar" : "Activar";
 
                         return (
                           <tr key={`${row.id}-${row.startedAt}`}>
-                            <td className="mono">{row.id}</td>
                             <td>{row.deviceName}</td>
                             <td>{formatDateTimeSeconds(row.startedAt)}</td>
                             <td>{formatDateTimeSeconds(row.expiresAt)}</td>
@@ -1529,18 +1694,10 @@ export default function App() {
                               <button
                                 type="button"
                                 className="ghost-btn"
-                                disabled={loadingDemos || isToggling || isSaving}
+                                disabled={loadingDemos || isSaving}
                                 onClick={() => handleOpenEditDemo(row)}
                               >
                                 Editar vencimiento
-                              </button>
-                              <button
-                                type="button"
-                                className="ghost-btn"
-                                disabled={loadingDemos || isToggling || isSaving}
-                                onClick={() => handleToggleDemo(row.id)}
-                              >
-                                {isToggling ? "Procesando..." : nextLabel}
                               </button>
                             </td>
                           </tr>
@@ -1558,7 +1715,7 @@ export default function App() {
                   <div className="modal-header">
                     <div>
                       <h3>Editar demo</h3>
-                      <p className="muted">{editingDemo.id}</p>
+                      {editingDemo?.deviceName && <p className="muted">{editingDemo.deviceName}</p>}
                     </div>
                     <button type="button" className="ghost-btn" disabled={!!savingDemoId} onClick={handleCloseEditDemo}>
                       Cerrar
@@ -1608,36 +1765,201 @@ export default function App() {
           <>
             <SectionTitle
               title="Versiones"
-              subtitle="Acá ves qué versión domina, cuáles quedaron viejas y cuáles ya deberías bloquear."
+              subtitle="Administrá releases obligatorias: una sola puede estar activa y fuerza actualización."
             />
-            <div className="card">
-              <div className="table-wrap">
-                <table>
-                    <thead>
-                      <tr>
-                        <th>Versión</th>
-                        <th>Dispositivos</th>
-                        <th>Usuarios</th>
-                        <th>Mínima soportada</th>
-                        <th>Estado</th>
-                      </tr>
-                    </thead>
-                  <tbody>
-                    {versions.map((item) => (
-                      <tr key={item.version}>
-                        <td>{item.version}</td>
-                        <td>{item.devices}</td>
-                        <td>{item.users}</td>
-                        <td>{item.minSupported ? "Sí" : "No"}</td>
-                        <td>
-                          <span className={getBadgeClass(item.state)}>{item.state}</span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+            {!!releasesActionError && <p className="muted">{releasesActionError}</p>}
+            {loadingReleases ? (
+              <p className="muted">Cargando releases...</p>
+            ) : releasesError ? (
+              <p className="muted">{releasesError}</p>
+            ) : (
+              <>
+                <div className="releases-grid">
+                  <div className="card">
+                    <div className="detail-header">
+                      <div>
+                        <p className="muted">Release activa actual</p>
+                        <h3 style={{ margin: 0 }}>{activeRelease?.versionName || "-"}</h3>
+                      </div>
+                      {activeRelease?.apkUrl && activeRelease.apkUrl !== "-" && (
+                        <a
+                          className="ghost-btn"
+                          href={activeRelease.apkUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          Abrir APK
+                        </a>
+                      )}
+                    </div>
+
+                    <div className="detail-grid">
+                      <div className="detail-box">
+                        <span>version_code</span>
+                        <div className="mono">{activeRelease?.versionCode ?? "-"}</div>
+                      </div>
+                      <div className="detail-box">
+                        <span>Estado</span>
+                        <div>
+                          <span className={activeRelease?.isActive ? "badge badge-green" : "badge badge-yellow"}>
+                            {activeRelease?.status || "Inactiva"}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="detail-box">
+                        <span>created_at</span>
+                        <div>{formatDateTime(activeRelease?.createdAt)}</div>
+                      </div>
+                      <div className="detail-box">
+                        <span>apk_url</span>
+                        <div className="mono">{activeRelease?.apkUrl || "-"}</div>
+                      </div>
+                    </div>
+
+                    <div className="detail-section">
+                      <div className="detail-label">Mensaje</div>
+                      <div className="detail-content">{activeRelease?.message || "-"}</div>
+                    </div>
+                  </div>
+
+                  <div className="card">
+                    <div className="detail-header">
+                      <div>
+                        <p className="muted">Nueva release</p>
+                        <h3 style={{ margin: 0 }}>Crear (queda activa)</h3>
+                      </div>
+                    </div>
+
+                    <div className="release-form-grid">
+                      <div>
+                        <p className="muted">version_name</p>
+                        <input
+                          type="text"
+                          value={releaseNameValue}
+                          onChange={(e) => setReleaseNameValue(e.target.value)}
+                          className="demo-input"
+                          placeholder="1.0.9"
+                        />
+                      </div>
+                      <div>
+                        <p className="muted">version_code</p>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          value={releaseCodeValue}
+                          onChange={(e) => setReleaseCodeValue(e.target.value)}
+                          className="demo-input"
+                          placeholder="109"
+                        />
+                      </div>
+                      <div className="release-form-full">
+                        <p className="muted">apk_url</p>
+                        <input
+                          type="text"
+                          value={releaseApkUrlValue}
+                          onChange={(e) => setReleaseApkUrlValue(e.target.value)}
+                          className="demo-input"
+                          placeholder="https://..."
+                        />
+                      </div>
+                      <div className="release-form-full">
+                        <p className="muted">message</p>
+                        <textarea
+                          rows={3}
+                          value={releaseMessageValue}
+                          onChange={(e) => setReleaseMessageValue(e.target.value)}
+                          className="demo-input"
+                          placeholder="Qué cambia y por qué es obligatoria"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="modal-actions">
+                      <button
+                        type="button"
+                        className="primary-btn"
+                        disabled={creatingRelease || loadingReleases || activatingReleaseId !== "" || deletingReleaseId !== ""}
+                        onClick={handleCreateRelease}
+                      >
+                        {creatingRelease ? "Creando..." : "Crear y activar"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="card">
+                  <div className="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>version_name</th>
+                          <th>version_code</th>
+                          <th>apk_url</th>
+                          <th>message</th>
+                          <th>Estado</th>
+                          <th>created_at</th>
+                          <th>Acciones</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {releaseRows.length === 0 ? (
+                          <tr>
+                            <td colSpan={7} className="muted">
+                              No hay releases
+                            </td>
+                          </tr>
+                        ) : (
+                          releaseRows.map((row) => {
+                            const isActivating = activatingReleaseId === row.rawId;
+                            const isDeleting = deletingReleaseId === row.rawId;
+                            return (
+                              <tr key={row.rawId ? row.rawId : `${row.id}-${row.createdAt}`}>
+                                <td>{row.versionName}</td>
+                                <td className="mono">{row.versionCode}</td>
+                                <td>
+                                  {row.apkUrl && row.apkUrl !== "-" ? (
+                                    <a className="ghost-btn" href={row.apkUrl} target="_blank" rel="noreferrer">
+                                      Abrir
+                                    </a>
+                                  ) : (
+                                    "-"
+                                  )}
+                                </td>
+                                <td>{row.message || "-"}</td>
+                                <td>
+                                  <span className={row.isActive ? "badge badge-green" : "badge badge-yellow"}>
+                                    {row.status}
+                                  </span>
+                                </td>
+                                <td>{formatDateTime(row.createdAt)}</td>
+                                <td className="releases-actions">
+                                  <button
+                                    type="button"
+                                    className="ghost-btn"
+                                    disabled={loadingReleases || creatingRelease || row.isActive || isActivating || isDeleting}
+                                    onClick={() => handleActivateRelease(row)}
+                                  >
+                                    {isActivating ? "Activando..." : "Activar"}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="ghost-btn"
+                                    disabled={loadingReleases || creatingRelease || isActivating || isDeleting}
+                                    onClick={() => handleDeleteRelease(row)}
+                                  >
+                                    {isDeleting ? "Eliminando..." : "Eliminar"}
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </>
+            )}
           </>
         )}
       </main>

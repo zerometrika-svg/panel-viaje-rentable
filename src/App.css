@@ -312,6 +312,7 @@ th {
   align-items: center;
   gap: 6px;
   color: var(--text);
+  text-decoration: none;
 }
 
 .primary-btn {
@@ -378,6 +379,31 @@ th {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.releases-grid {
+  display: grid;
+  grid-template-columns: 1.1fr 0.9fr;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.releases-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.release-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.release-form-full {
+  grid-column: 1 / -1;
 }
 
 .modal-backdrop {
@@ -477,7 +503,7 @@ th {
   padding: 14px;
 }
 
-.detail-box span {
+.detail-box > span {
   display: block;
   color: var(--muted);
   font-size: 12px;
@@ -557,6 +583,10 @@ th {
   }
 
   .demo-edit-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .releases-grid {
     grid-template-columns: 1fr;
   }
 
