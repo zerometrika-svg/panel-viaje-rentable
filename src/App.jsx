@@ -15,23 +15,6 @@ import "./App.css";
 
 const API_BASE_URL = "https://viaje-rentable-api.onrender.com";
 
-const demos = [
-  {
-    device: "device_abc_123",
-    user: "cristian@demo.com",
-    startedAt: "2026-04-10",
-    expiresAt: "2026-04-17",
-    state: "Activa",
-  },
-  {
-    device: "device_hhh_444",
-    user: "usuario4@demo.com",
-    startedAt: "2026-04-01",
-    expiresAt: "2026-04-08",
-    state: "Vencida",
-  },
-];
-
 const versions = [
   {
     version: "1.0.8",
@@ -60,15 +43,83 @@ function getBadgeClass(value) {
   if (
     value === "Pendiente" ||
     value === "Vencida" ||
+    value === "Expirada" ||
     value === "Desactualizada" ||
     value === "Bloqueable"
   ) {
     return "badge badge-red";
   }
-  if (value === "Revisado") {
+  if (value === "Revisado" || value === "Pausada") {
     return "badge badge-yellow";
   }
   return "badge badge-green";
+}
+
+function parseDate(value) {
+  if (!value || typeof value !== "string") return null;
+  const trimmed = value.trim();
+
+  const localMatch = trimmed.match(
+    /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/
+  );
+  if (localMatch) {
+    const year = Number(localMatch[1]);
+    const month = Number(localMatch[2]);
+    const day = Number(localMatch[3]);
+    const hour = Number(localMatch[4]);
+    const minute = Number(localMatch[5]);
+    const second = Number(localMatch[6] || "0");
+    const localDate = new Date(year, month - 1, day, hour, minute, second, 0);
+    return Number.isNaN(localDate.getTime()) ? null : localDate;
+  }
+
+  const date = new Date(trimmed);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatDateTime(value) {
+  const date = value instanceof Date ? value : parseDate(value);
+  if (!date) return "-";
+  try {
+    return new Intl.DateTimeFormat("es-AR", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(date);
+  } catch {
+    return date.toLocaleString();
+  }
+}
+
+function formatDateTimeSeconds(value) {
+  const date = value instanceof Date ? value : parseDate(value);
+  if (!date) return "-";
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()} ${pad(
+    date.getHours()
+  )}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+function formatDuration(ms) {
+  const safeMs = Math.max(0, ms);
+  const totalMinutes = Math.floor(safeMs / 60000);
+  const days = Math.floor(totalMinutes / (60 * 24));
+  const hours = Math.floor((totalMinutes - days * 60 * 24) / 60);
+  const minutes = totalMinutes - days * 60 * 24 - hours * 60;
+
+  if (days > 0) return `${days}d ${hours}h ${minutes}m`;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
+}
+
+function getRemainingLabel(expiresAt, nowTs) {
+  const date = expiresAt instanceof Date ? expiresAt : parseDate(expiresAt);
+  if (!date) return "-";
+  const diff = date.getTime() - nowTs;
+  if (diff <= 0) return `Vencida hace ${formatDuration(-diff)}`;
+  return formatDuration(diff);
 }
 
 function MetricCard({ title, value, hint, icon: Icon }) {
@@ -124,18 +175,29 @@ export default function App() {
 
   const [licenses, setLicenses] = useState([]);
   const [devices, setDevices] = useState([]);
+  const [demos, setDemos] = useState([]);
   const [loadingLicenses, setLoadingLicenses] = useState(false);
   const [loadingDevices, setLoadingDevices] = useState(false);
+  const [loadingDemos, setLoadingDemos] = useState(false);
   const [licensesError, setLicensesError] = useState("");
   const [devicesError, setDevicesError] = useState("");
+  const [demosError, setDemosError] = useState("");
   const [licensesActionError, setLicensesActionError] = useState("");
   const [devicesActionError, setDevicesActionError] = useState("");
+  const [demosActionError, setDemosActionError] = useState("");
   const [togglingLicenseId, setTogglingLicenseId] = useState("");
   const [togglingDeviceId, setTogglingDeviceId] = useState("");
+  const [togglingDemoId, setTogglingDemoId] = useState("");
   const [copiedDeviceId, setCopiedDeviceId] = useState("");
   const [copyDeviceError, setCopyDeviceError] = useState("");
   const copyDeviceTimeoutRef = useRef(0);
   const copyDeviceErrorTimeoutRef = useRef(0);
+  const [nowTs, setNowTs] = useState(() => Date.now());
+
+  const [editingDemo, setEditingDemo] = useState(null);
+  const [demoStartedValue, setDemoStartedValue] = useState("");
+  const [demoExactValue, setDemoExactValue] = useState("");
+  const [savingDemoId, setSavingDemoId] = useState("");
 
   useEffect(() => {
     try {
@@ -244,6 +306,39 @@ export default function App() {
     }
   };
 
+  const fetchDemos = async ({ signal } = {}) => {
+    setLoadingDemos(true);
+    setDemosError("");
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/demos`, { signal });
+      if (!res.ok) {
+        setDemos([]);
+        setDemosError(`Error al cargar demos (${res.status})`);
+        return;
+      }
+
+      const payload = await res.json();
+      if (payload?.ok !== true) {
+        setDemos([]);
+        setDemosError("Error al cargar demos");
+        return;
+      }
+
+      const data = Array.isArray(payload.data) ? payload.data : [];
+      setDemos(data);
+      if (!Array.isArray(payload.data)) {
+        setDemosError("Error al cargar demos");
+      }
+    } catch (err) {
+      if (err?.name !== "AbortError") {
+        setDemos([]);
+        setDemosError("Error al cargar demos");
+      }
+    } finally {
+      setLoadingDemos(false);
+    }
+  };
+
   const handleToggleLicense = async (id) => {
     if (!id) {
       setLicensesActionError("No se pudo ejecutar la acción (id inválido)");
@@ -301,6 +396,35 @@ export default function App() {
       setDevicesActionError("Error al actualizar dispositivo");
     } finally {
       setTogglingDeviceId("");
+    }
+  };
+
+  const handleToggleDemo = async (id) => {
+    if (!id || id === "-") {
+      setDemosActionError("No se pudo ejecutar la acción (id inválido)");
+      return;
+    }
+
+    setTogglingDemoId(id);
+    setDemosActionError("");
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/demos/${encodeURIComponent(id)}/toggle`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        setDemosActionError(`Error al actualizar demo (${res.status})`);
+        return;
+      }
+      const payload = await res.json().catch(() => null);
+      if (payload?.ok !== true) {
+        setDemosActionError("Error al actualizar demo");
+        return;
+      }
+      await fetchDemos();
+    } catch {
+      setDemosActionError("Error al actualizar demo");
+    } finally {
+      setTogglingDemoId("");
     }
   };
 
@@ -463,9 +587,17 @@ export default function App() {
     fetchErrors({ signal: controller.signal });
     fetchLicenses({ signal: controller.signal });
     fetchDevices({ signal: controller.signal });
+    fetchDemos({ signal: controller.signal });
     return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (tab !== "demos") return;
+    setNowTs(Date.now());
+    const id = window.setInterval(() => setNowTs(Date.now()), 30_000);
+    return () => window.clearInterval(id);
+  }, [tab]);
 
   const errorRows = useMemo(() => {
     return errorReports.map((item) => {
@@ -636,7 +768,6 @@ export default function App() {
     return devices.map((item) => {
       const rawId = item?.id || item?.device_hash || item?.device_id || "";
       const id = item?.device_hash || item?.id || "-";
-      const user = "-";
       const model = item?.device_name || item?.model || "-";
       const android = item?.android_version || item?.android || "-";
       const version = item?.app_version || item?.version || "-";
@@ -649,17 +780,123 @@ export default function App() {
             : "Inactivo"
           : "-";
 
-      return { rawId, id, user, model, android, version, license, lastSeen, state };
+      return { rawId, id, model, android, version, license, lastSeen, state };
     });
   }, [devices]);
+
+  const demoRows = useMemo(() => {
+    return demos.map((item) => {
+      const id = item?.id || item?.demo_id || item?.device_id || item?.device_hash || "-";
+      const deviceName = item?.device_name || "-";
+      const startedAt = item?.demo_started_at || "-";
+      const expiresAt = item?.demo_expires_at || "-";
+      const rawStatus = item?.demo_status || "-";
+      const status =
+        rawStatus === "activa"
+          ? "Activa"
+          : rawStatus === "pausada"
+            ? "Pausada"
+            : rawStatus === "expirada"
+              ? "Expirada"
+              : rawStatus || "-";
+
+      return { id, deviceName, startedAt, expiresAt, status, rawStatus };
+    });
+  }, [demos]);
 
   const dashboardStats = useMemo(() => {
     const licensesActive = licenseRows.filter((l) => l.status === "Activa").length;
     const devicesActive = deviceRows.filter((d) => d.state === "Activo").length;
-    const demosActive = demos.filter((d) => d.state === "Activa").length;
+    const demosActive = demoRows.filter((d) => d.status === "Activa").length;
     const currentVersion = versions.find((v) => v.state === "Actual")?.version || "-";
     return { licensesActive, devicesActive, demosActive, currentVersion };
-  }, [licenseRows, deviceRows]);
+  }, [licenseRows, deviceRows, demoRows]);
+
+  const handleOpenEditDemo = (row) => {
+    setDemosActionError("");
+    setEditingDemo(row);
+
+    const pad = (n) => String(n).padStart(2, "0");
+    const started = parseDate(row?.startedAt);
+    const expires = parseDate(row?.expiresAt);
+
+    if (started) {
+      setDemoStartedValue(
+        `${started.getFullYear()}-${pad(started.getMonth() + 1)}-${pad(started.getDate())}T${pad(
+          started.getHours()
+        )}:${pad(started.getMinutes())}:${pad(started.getSeconds())}`
+      );
+    } else {
+      setDemoStartedValue("");
+    }
+
+    if (expires) {
+      setDemoExactValue(
+        `${expires.getFullYear()}-${pad(expires.getMonth() + 1)}-${pad(expires.getDate())}T${pad(
+          expires.getHours()
+        )}:${pad(expires.getMinutes())}:${pad(expires.getSeconds())}`
+      );
+    } else {
+      setDemoExactValue("");
+    }
+  };
+
+  const handleCloseEditDemo = () => {
+    if (savingDemoId) return;
+    setEditingDemo(null);
+  };
+
+  const handleUpdateDemoExpiresAt = async () => {
+    if (!editingDemo?.id || editingDemo.id === "-") return;
+    if (!demoStartedValue) {
+      setDemosActionError("Ingresá una fecha/hora de inicio");
+      return;
+    }
+    if (!demoExactValue) {
+      setDemosActionError("Ingresá una fecha/hora de vencimiento");
+      return;
+    }
+
+    const startedAt = parseDate(demoStartedValue) || new Date(demoStartedValue);
+    if (Number.isNaN(startedAt.getTime())) {
+      setDemosActionError("Fecha/hora de inicio inválida");
+      return;
+    }
+
+    const expiresAt = parseDate(demoExactValue) || new Date(demoExactValue);
+    if (Number.isNaN(expiresAt.getTime())) {
+      setDemosActionError("Fecha/hora inválida");
+      return;
+    }
+
+    setSavingDemoId(editingDemo.id);
+    setDemosActionError("");
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/demos/${encodeURIComponent(editingDemo.id)}/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          demo_started_at: startedAt.toISOString(),
+          demo_expires_at: expiresAt.toISOString(),
+        }),
+      });
+      if (!res.ok) {
+        setDemosActionError(`Error al actualizar demo (${res.status})`);
+        return;
+      }
+      const payload = await res.json().catch(() => null);
+      if (payload?.ok !== true) {
+        setDemosActionError("Error al actualizar demo");
+        return;
+      }
+      await fetchDemos();
+      setEditingDemo(null);
+    } catch {
+      setDemosActionError("Error al actualizar demo");
+    } finally {
+      setSavingDemoId("");
+    }
+  };
 
   return (
     <div className="layout">
@@ -1172,12 +1409,13 @@ export default function App() {
                 <p className="muted">No hay dispositivos</p>
               ) : (
                 <div className="table-wrap">
-                  <table>
+                  <table className="devices-table">
                     <thead>
                       <tr>
                         <th>Device ID</th>
-                        <th>Usuario</th>
                         <th>Dispositivo</th>
+                        <th>Android</th>
+                        <th>Versión</th>
                         <th>Licencia</th>
                         <th>Última conexión</th>
                         <th>Estado</th>
@@ -1214,7 +1452,6 @@ export default function App() {
                                 {copiedDeviceId === item.id && <span className="muted">Copiado</span>}
                               </div>
                             </td>
-                            <td>{item.user}</td>
                             <td>{item.model}</td>
                             <td>{item.android}</td>
                             <td>{item.version}</td>
@@ -1250,33 +1487,120 @@ export default function App() {
               subtitle="Acá controlás quién está probando, quién venció y quién puede estar queriendo abusar."
             />
             <div className="card">
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Device</th>
-                      <th>Usuario</th>
-                      <th>Inicio</th>
-                      <th>Fin</th>
-                      <th>Estado</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {demos.map((item) => (
-                      <tr key={`${item.device}-${item.startedAt}`}>
-                        <td>{item.device}</td>
-                        <td>{item.user}</td>
-                        <td>{item.startedAt}</td>
-                        <td>{item.expiresAt}</td>
-                        <td>
-                          <span className={getBadgeClass(item.state)}>{item.state}</span>
-                        </td>
+              {!!demosActionError && <p className="muted">{demosActionError}</p>}
+              {loadingDemos ? (
+                <p className="muted">Cargando demos...</p>
+              ) : demosError ? (
+                <p className="muted">{demosError}</p>
+              ) : demoRows.length === 0 ? (
+                <p className="muted">No hay demos</p>
+              ) : (
+                <div className="table-wrap">
+                  <table className="demos-table">
+                    <thead>
+                      <tr>
+                        <th>Demo ID</th>
+                        <th>Dispositivo</th>
+                        <th>Inicio</th>
+                        <th>Vence</th>
+                        <th>Restante</th>
+                        <th>Estado</th>
+                        <th>Acción</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody>
+                      {demoRows.map((row) => {
+                        const remainingLabel = getRemainingLabel(row.expiresAt, nowTs);
+                        const isToggling = togglingDemoId === row.id;
+                        const isSaving = savingDemoId === row.id;
+                        const nextLabel = row.status === "Activa" ? "Desactivar" : "Activar";
+
+                        return (
+                          <tr key={`${row.id}-${row.startedAt}`}>
+                            <td className="mono">{row.id}</td>
+                            <td>{row.deviceName}</td>
+                            <td>{formatDateTimeSeconds(row.startedAt)}</td>
+                            <td>{formatDateTimeSeconds(row.expiresAt)}</td>
+                            <td>{remainingLabel}</td>
+                            <td>
+                              <span className={getBadgeClass(row.status)}>{row.status}</span>
+                            </td>
+                            <td className="demos-actions">
+                              <button
+                                type="button"
+                                className="ghost-btn"
+                                disabled={loadingDemos || isToggling || isSaving}
+                                onClick={() => handleOpenEditDemo(row)}
+                              >
+                                Editar vencimiento
+                              </button>
+                              <button
+                                type="button"
+                                className="ghost-btn"
+                                disabled={loadingDemos || isToggling || isSaving}
+                                onClick={() => handleToggleDemo(row.id)}
+                              >
+                                {isToggling ? "Procesando..." : nextLabel}
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
+
+            {!!editingDemo && (
+              <div className="modal-backdrop" role="dialog" aria-modal="true">
+                <div className="modal">
+                  <div className="modal-header">
+                    <div>
+                      <h3>Editar demo</h3>
+                      <p className="muted">{editingDemo.id}</p>
+                    </div>
+                    <button type="button" className="ghost-btn" disabled={!!savingDemoId} onClick={handleCloseEditDemo}>
+                      Cerrar
+                    </button>
+                  </div>
+
+                  <div className="modal-body">
+                    <div className="demo-edit-grid">
+                      <div>
+                        <p className="muted">demo_started_at</p>
+                        <input
+                          type="datetime-local"
+                          step="1"
+                          value={demoStartedValue}
+                          onChange={(e) => setDemoStartedValue(e.target.value)}
+                          className="demo-input"
+                        />
+                      </div>
+                      <div>
+                        <p className="muted">Nuevo demo_expires_at</p>
+                        <input
+                          type="datetime-local"
+                          step="1"
+                          value={demoExactValue}
+                          onChange={(e) => setDemoExactValue(e.target.value)}
+                          className="demo-input"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="modal-actions">
+                    <button type="button" className="primary-btn" disabled={!!savingDemoId} onClick={handleUpdateDemoExpiresAt}>
+                      {savingDemoId ? "Guardando..." : "Guardar"}
+                    </button>
+                    <button type="button" className="secondary-btn" disabled={!!savingDemoId} onClick={handleCloseEditDemo}>
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </>
         )}
 
