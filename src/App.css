@@ -381,6 +381,21 @@ th {
   flex-wrap: wrap;
 }
 
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.danger-btn {
+  color: var(--danger);
+}
+
+.danger-btn:hover:not(:disabled) {
+  background: rgba(220, 38, 38, 0.12);
+}
+
 .releases-grid {
   display: grid;
   grid-template-columns: 1.1fr 0.9fr;

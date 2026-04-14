@@ -15,30 +15,6 @@ import "./App.css";
 
 const API_BASE_URL = "https://viaje-rentable-api.onrender.com";
 
-const versions = [
-  {
-    version: "1.0.8",
-    devices: 12,
-    users: 10,
-    minSupported: true,
-    state: "Actual",
-  },
-  {
-    version: "1.0.7",
-    devices: 4,
-    users: 4,
-    minSupported: false,
-    state: "Desactualizada",
-  },
-  {
-    version: "1.0.6",
-    devices: 2,
-    users: 2,
-    minSupported: false,
-    state: "Bloqueable",
-  },
-];
-
 function getBadgeClass(value) {
   if (
     value === "Pendiente" ||
@@ -191,6 +167,7 @@ export default function App() {
   const [releasesActionError, setReleasesActionError] = useState("");
   const [togglingLicenseId, setTogglingLicenseId] = useState("");
   const [togglingDeviceId, setTogglingDeviceId] = useState("");
+  const [deletingDeviceId, setDeletingDeviceId] = useState("");
   const [copiedDeviceId, setCopiedDeviceId] = useState("");
   const [copyDeviceError, setCopyDeviceError] = useState("");
   const copyDeviceTimeoutRef = useRef(0);
@@ -440,6 +417,41 @@ export default function App() {
       setDevicesActionError("Error al actualizar dispositivo");
     } finally {
       setTogglingDeviceId("");
+    }
+  };
+
+  const handleDeleteDevice = async (id) => {
+    if (!id) {
+      setDevicesActionError("No se pudo ejecutar la acción (id inválido)");
+      return;
+    }
+
+    const confirmed = window.confirm("¿Eliminar dispositivo?");
+    if (!confirmed) return;
+
+    setDeletingDeviceId(id);
+    setDevicesActionError("");
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/devices/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      });
+
+      if (!res.ok) {
+        setDevicesActionError(`Error al eliminar dispositivo (${res.status})`);
+        return;
+      }
+
+      const payload = await res.json().catch(() => null);
+      if (payload && payload?.ok !== true) {
+        setDevicesActionError("Error al eliminar dispositivo");
+        return;
+      }
+
+      await fetchDevices();
+    } catch {
+      setDevicesActionError("Error al eliminar dispositivo");
+    } finally {
+      setDeletingDeviceId("");
     }
   };
 
@@ -802,21 +814,55 @@ export default function App() {
 
   const demoRows = useMemo(() => {
     return demos.map((item) => {
-      const id = item?.id || item?.device_id || item?.device_hash || "-";
-      const deviceName = item?.device_name || "-";
+      const demoId = item?.id || item?.demo_id || item?.demoId || item?.demoID || "";
+      const deviceId = item?.device_id || item?.deviceId || item?.device_hash || item?.deviceHash || "";
+      const id = demoId || deviceId || "-";
+      const deviceName =
+        item?.device_name ||
+        item?.deviceName ||
+        item?.device_model ||
+        item?.model ||
+        item?.device ||
+        item?.name ||
+        (deviceId ? String(deviceId) : "-");
       const startedAt = item?.demo_started_at || "-";
       const expiresAt = item?.demo_expires_at || "-";
-      const rawStatus = item?.demo_status || "-";
+      const rawStatus =
+        item?.demo_status ||
+        item?.demoStatus ||
+        item?.demo_state ||
+        item?.demoState ||
+        item?.status ||
+        item?.state ||
+        (typeof item?.is_active === "boolean" ? (item.is_active ? "activa" : "pausada") : "-");
+      const normalized = typeof rawStatus === "string" ? rawStatus.trim().toLowerCase() : rawStatus;
+      const isActive =
+        item?.demo_active === true ||
+        item?.demo_is_active === true ||
+        item?.is_active === true ||
+        normalized === "activa" ||
+        normalized === "active" ||
+        normalized === "enabled";
       const status =
-        rawStatus === "activa"
+        isActive
           ? "Activa"
-          : rawStatus === "pausada"
+          : normalized === "pausada" || normalized === "paused" || normalized === "inactive"
             ? "Pausada"
-            : rawStatus === "expirada"
+            : normalized === "expirada" || normalized === "expired"
               ? "Expirada"
               : rawStatus || "-";
 
-      return { id, deviceName, startedAt, expiresAt, status, rawStatus };
+      return {
+        id,
+        demoId: demoId ? String(demoId) : "",
+        deviceId: deviceId ? String(deviceId) : "",
+        deviceName,
+        startedAt,
+        expiresAt,
+        status,
+        rawStatus,
+        isActive,
+      };
     });
   }, [demos]);
 
@@ -851,7 +897,16 @@ export default function App() {
   }, [releases]);
 
   const activeRelease = useMemo(() => {
-    return releaseRows.find((row) => row.isActive) || null;
+    const active = releaseRows.filter((row) => row.isActive);
+    if (active.length === 0) return null;
+    if (active.length === 1) return active[0];
+
+    const sorted = [...active].sort((a, b) => {
+      const aTs = parseDate(a.createdAt)?.getTime() ?? 0;
+      const bTs = parseDate(b.createdAt)?.getTime() ?? 0;
+      return bTs - aTs;
+    });
+    return sorted[0] || active[0] || null;
   }, [releaseRows]);
 
   const handleCreateRelease = async () => {
@@ -974,12 +1029,15 @@ export default function App() {
   };
 
   const dashboardStats = useMemo(() => {
-    const licensesActive = licenseRows.filter((l) => l.status === "Activa").length;
     const devicesActive = deviceRows.filter((d) => d.state === "Activo").length;
-    const demosActive = demoRows.filter((d) => d.status === "Activa").length;
-    const currentVersion = versions.find((v) => v.state === "Actual")?.version || "-";
-    return { licensesActive, devicesActive, demosActive, currentVersion };
-  }, [licenseRows, deviceRows, demoRows]);
+    const demosActive = demoRows.filter((d) => d.isActive).length;
+    return {
+      devicesActive,
+      demosActive,
+      currentVersionName: activeRelease?.versionName || "-",
+      currentVersionCode: activeRelease?.versionCode ?? "-",
+    };
+  }, [activeRelease, deviceRows, demoRows]);
 
   const handleOpenEditDemo = (row) => {
     setDemosActionError("");
@@ -1016,7 +1074,8 @@ export default function App() {
   };
 
   const handleUpdateDemoExpiresAt = async () => {
-    if (!editingDemo?.id || editingDemo.id === "-") return;
+    const demoId = editingDemo?.demoId || editingDemo?.id || "";
+    if (!demoId || demoId === "-") return;
     if (!demoStartedValue) {
       setDemosActionError("Ingresá una fecha/hora de inicio");
       return;
@@ -1038,10 +1097,10 @@ export default function App() {
       return;
     }
 
-    setSavingDemoId(editingDemo.id);
+    setSavingDemoId(demoId);
     setDemosActionError("");
     try {
-      const res = await fetch(`${API_BASE_URL}/admin/demos/${encodeURIComponent(editingDemo.id)}/update`, {
+      const res = await fetch(`${API_BASE_URL}/admin/demos/${encodeURIComponent(demoId)}/update`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1152,12 +1211,6 @@ export default function App() {
                 icon={AlertTriangle}
               />
               <MetricCard
-                title="Licencias activas"
-                value={String(dashboardStats.licensesActive)}
-                hint="Usuarios con acceso"
-                icon={KeyRound}
-              />
-              <MetricCard
                 title="Dispositivos activos"
                 value={String(dashboardStats.devicesActive)}
                 hint="Estado activo"
@@ -1171,8 +1224,8 @@ export default function App() {
               />
               <MetricCard
                 title="Versión actual"
-                value={dashboardStats.currentVersion}
-                hint="Referencia"
+                value={dashboardStats.currentVersionName}
+                hint={`version_code: ${dashboardStats.currentVersionCode}`}
                 icon={Bot}
               />
             </div>
@@ -1334,7 +1387,6 @@ export default function App() {
                       <thead>
                         <tr>
                           <th>Tipo</th>
-                          <th>Descripción</th>
                           <th>Screen</th>
                           <th>Versión</th>
                           <th>Dispositivo</th>
@@ -1347,11 +1399,6 @@ export default function App() {
                         {filteredErrors.map((item, index) => (
                           <tr key={`${item.id}-${index}`}>
                             <td>{item.type}</td>
-                            <td>
-                              {item.description && item.description !== "-" && item.description.length > 80
-                                ? `${item.description.slice(0, 80)}…`
-                                : item.description}
-                            </td>
                             <td>{item.screen}</td>
                             <td>{item.appVersion}</td>
                             <td>{item.deviceName}</td>
@@ -1494,68 +1541,14 @@ export default function App() {
           <>
             <SectionTitle
               title="Licencias"
-              subtitle="Acá controlás qué código está activo, quién lo usa y cuándo vence."
+              subtitle="Sección en pausa: licencias no se usan por ahora."
             />
             <div className="card">
-              {!!licensesActionError && <p className="muted">{licensesActionError}</p>}
-              {loadingLicenses ? (
-                <p className="muted">Cargando licencias...</p>
-              ) : licensesError ? (
-                <p className="muted">{licensesError}</p>
-              ) : licenseRows.length === 0 ? (
-                <p className="muted">No hay licencias</p>
-              ) : (
-                <div className="table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Código</th>
-                        <th>Plan</th>
-                        <th>Usuario</th>
-                        <th>Modelo</th>
-                        <th>Android</th>
-                        <th>VersiÃ³n</th>
-                        <th>Vence</th>
-                        <th>Estado</th>
-                        <th>Acción</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {licenseRows.map((item, index) => {
-                        const canToggle = item.status === "Activa" || item.status === "Inactiva";
-                        const nextLabel =
-                          item.status === "Activa"
-                            ? "Desactivar"
-                            : item.status === "Inactiva"
-                              ? "Activar"
-                              : "-";
-                        const isToggling = !!item.rawId && togglingLicenseId === item.rawId;
-
-                        return (
-                          <tr key={item.rawId ? item.rawId : `${item.code}-${index}`}>
-                            <td>{item.code}</td>
-                            <td>{item.plan}</td>
-                            <td>{item.assignedTo}</td>
-                            <td>{item.device}</td>
-                            <td>{item.expiresAt}</td>
-                            <td>
-                              <span className={getBadgeClass(item.status)}>{item.status}</span>
-                            </td>
-                            <td>
-                              <button
-                                className="ghost-btn"
-                                disabled={!canToggle || !item.rawId || isToggling || loadingLicenses}
-                                onClick={() => handleToggleLicense(item.rawId)}
-                              >
-                                {isToggling ? "Procesando..." : nextLabel}
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+              <p className="muted">
+                Para evitar confusión, esta vista no muestra datos de licencias en este momento.
+              </p>
+              {(loadingLicenses || licensesError || licensesActionError) && (
+                <p className="muted">Estado: la sincronización de licencias permanece activa en segundo plano.</p>
               )}
             </div>
           </>
@@ -1601,6 +1594,7 @@ export default function App() {
                               ? "Liberar"
                               : "-";
                         const isToggling = !!item.rawId && togglingDeviceId === item.rawId;
+                        const isDeleting = !!item.rawId && deletingDeviceId === item.rawId;
 
                         return (
                           <tr key={item.rawId ? item.rawId : `${item.id}-${index}`}>
@@ -1630,13 +1624,24 @@ export default function App() {
                               <span className={getBadgeClass(item.state)}>{item.state}</span>
                             </td>
                             <td>
-                              <button
-                                className="ghost-btn"
-                                disabled={!canToggle || !item.rawId || isToggling || loadingDevices}
-                                onClick={() => handleToggleDevice(item.rawId)}
-                              >
-                                {isToggling ? "Procesando..." : nextLabel}
-                              </button>
+                              <div className="row-actions">
+                                <button
+                                  className="ghost-btn"
+                                  disabled={!canToggle || !item.rawId || isToggling || isDeleting || loadingDevices}
+                                  onClick={() => handleToggleDevice(item.rawId)}
+                                >
+                                  {isToggling ? "Procesando..." : nextLabel}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="ghost-btn icon-btn danger-btn"
+                                  title="Eliminar"
+                                  disabled={!item.rawId || isToggling || isDeleting || loadingDevices}
+                                  onClick={() => handleDeleteDevice(item.rawId)}
+                                >
+                                  {isDeleting ? "…" : "❌"}
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         );
