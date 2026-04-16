@@ -280,6 +280,9 @@ export default function App() {
   const [reviewingOfferFailureId, setReviewingOfferFailureId] = useState("");
   const [deletingOfferFailureId, setDeletingOfferFailureId] = useState("");
   const [deletingReviewedOfferFailures, setDeletingReviewedOfferFailures] = useState(false);
+  const [deletingAllOfferFailures, setDeletingAllOfferFailures] = useState(false);
+  const [deleteAllOfferFailuresDone, setDeleteAllOfferFailuresDone] = useState(0);
+  const [deleteAllOfferFailuresTotal, setDeleteAllOfferFailuresTotal] = useState(0);
   const [offerFailureNote, setOfferFailureNote] = useState("");
   const [copiedOfferFailureDiagnostic, setCopiedOfferFailureDiagnostic] = useState(false);
   const [copiedOfferFailureTexts, setCopiedOfferFailureTexts] = useState(false);
@@ -899,6 +902,46 @@ export default function App() {
       setOfferFailureActionError("Error al borrar revisados");
     } finally {
       setDeletingReviewedOfferFailures(false);
+    }
+  };
+
+  const handleDeleteAllOfferFailures = async () => {
+    const ids = offerFailureRows.map((r) => r.rawId).filter((id) => !!id && id !== "-");
+    if (ids.length === 0) return;
+
+    const confirmText = window.prompt(
+      "Acción irreversible.\n\nEscribí BORRAR TODO para confirmar la eliminación de TODOS los diagnósticos:"
+    );
+    if (confirmText !== "BORRAR TODO") return;
+
+    const ok = window.confirm("Última confirmación: ¿seguro que querés borrar TODOS los diagnósticos?");
+    if (!ok) return;
+
+    setDeletingAllOfferFailures(true);
+    setDeleteAllOfferFailuresDone(0);
+    setDeleteAllOfferFailuresTotal(ids.length);
+    setOfferFailureActionError("");
+
+    try {
+      for (let i = 0; i < ids.length; i += 1) {
+        const id = ids[i];
+        setDeleteAllOfferFailuresDone(i);
+        const result = await deleteOfferFailureDiagnostic({ baseUrl: API_BASE_URL, id });
+        if (!result.ok) {
+          setOfferFailureActionError(`Error al borrar todo (${result.status})`);
+          return;
+        }
+      }
+
+      setDeleteAllOfferFailuresDone(ids.length);
+      setOfferFailureModalId("");
+      await fetchOfferFailureDiagnostics();
+    } catch {
+      setOfferFailureActionError("Error al borrar todo");
+    } finally {
+      setDeletingAllOfferFailures(false);
+      setDeleteAllOfferFailuresDone(0);
+      setDeleteAllOfferFailuresTotal(0);
     }
   };
 
@@ -2465,6 +2508,7 @@ export default function App() {
                       className="primary-btn danger-btn"
                       disabled={
                         deletingReviewedOfferFailures ||
+                        deletingAllOfferFailures ||
                         loadingOfferFailureDiagnostics ||
                         offerFailureStats.reviewed === 0
                       }
@@ -2473,6 +2517,22 @@ export default function App() {
                       {deletingReviewedOfferFailures
                         ? "Borrando revisados..."
                         : `Borrar revisados (${offerFailureStats.reviewed})`}
+                    </button>
+                    <button
+                      type="button"
+                      className="primary-btn danger-btn"
+                      disabled={
+                        deletingReviewedOfferFailures ||
+                        deletingAllOfferFailures ||
+                        loadingOfferFailureDiagnostics ||
+                        offerFailureRows.length === 0
+                      }
+                      onClick={handleDeleteAllOfferFailures}
+                      title="Elimina todos los diagnósticos (irreversible)"
+                    >
+                      {deletingAllOfferFailures
+                        ? `Borrando todo... (${deleteAllOfferFailuresDone}/${deleteAllOfferFailuresTotal})`
+                        : `Borrar todo (${offerFailureRows.length})`}
                     </button>
                   </div>
                 </div>
