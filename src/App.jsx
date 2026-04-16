@@ -248,6 +248,7 @@ export default function App() {
   const [releasesActionError, setReleasesActionError] = useState("");
   const [togglingLicenseId, setTogglingLicenseId] = useState("");
   const [togglingDeviceId, setTogglingDeviceId] = useState("");
+  const [togglingDeviceDiagnosticId, setTogglingDeviceDiagnosticId] = useState("");
   const [deletingDeviceId, setDeletingDeviceId] = useState("");
   const [copiedDeviceId, setCopiedDeviceId] = useState("");
   const [copyDeviceError, setCopyDeviceError] = useState("");
@@ -549,6 +550,55 @@ export default function App() {
       setDevicesActionError("Error al actualizar dispositivo");
     } finally {
       setTogglingDeviceId("");
+    }
+  };
+
+  const handleSetDeviceDiagnosticEnabled = async ({ id, enabled }) => {
+    if (!id) {
+      setDevicesActionError("No se pudo ejecutar la acción (id inválido)");
+      return;
+    }
+
+    setTogglingDeviceDiagnosticId(String(id));
+    setDevicesActionError("");
+    try {
+      const body = JSON.stringify({ diagnostic_enabled: !!enabled });
+      const headers = { "Content-Type": "application/json" };
+
+      const candidates = [
+        { url: `${API_BASE_URL}/admin/devices/${encodeURIComponent(id)}/diagnostic-enabled`, method: "POST" },
+        { url: `${API_BASE_URL}/admin/devices/${encodeURIComponent(id)}/diagnostic`, method: "POST" },
+        { url: `${API_BASE_URL}/admin/devices/${encodeURIComponent(id)}`, method: "PATCH" },
+        { url: `${API_BASE_URL}/admin/devices/${encodeURIComponent(id)}`, method: "PUT" },
+      ];
+
+      let lastStatus = 0;
+      for (const candidate of candidates) {
+        // eslint-disable-next-line no-await-in-loop
+        const res = await fetch(candidate.url, { method: candidate.method, headers, body });
+        lastStatus = res.status;
+        if (res.status === 404 || res.status === 405) continue;
+
+        if (!res.ok) {
+          setDevicesActionError(`Error al actualizar diagnóstico (${res.status})`);
+          return;
+        }
+
+        const payload = await res.json().catch(() => null);
+        if (payload && payload?.ok === false) {
+          setDevicesActionError("Error al actualizar diagnóstico");
+          return;
+        }
+
+        await fetchDevices();
+        return;
+      }
+
+      setDevicesActionError(`Endpoint no disponible para diagnóstico (${lastStatus || "?"})`);
+    } catch {
+      setDevicesActionError("Error al actualizar diagnóstico");
+    } finally {
+      setTogglingDeviceDiagnosticId("");
     }
   };
 
@@ -1387,8 +1437,14 @@ export default function App() {
             ? "Activo"
             : "Inactivo"
           : "-";
+      const diagnosticEnabled =
+        typeof item?.diagnostic_enabled === "boolean"
+          ? item.diagnostic_enabled
+          : typeof item?.diagnosticEnabled === "boolean"
+            ? item.diagnosticEnabled
+            : null;
 
-      return { rawId, id, model, android, version, license, lastSeen, lastSeenRaw, state };
+      return { rawId, id, model, android, version, license, lastSeen, lastSeenRaw, state, diagnosticEnabled };
     });
   }, [devices]);
 
@@ -3046,6 +3102,7 @@ export default function App() {
                         <th>Licencia</th>
                         <th>Última conexión</th>
                         <th>Estado</th>
+                        <th>Diagnóstico</th>
                         <th>Acción</th>
                       </tr>
                     </thead>
@@ -3059,6 +3116,8 @@ export default function App() {
                               ? "Liberar"
                               : "-";
                         const isToggling = !!item.rawId && togglingDeviceId === item.rawId;
+                        const isTogglingDiagnostic =
+                          !!item.rawId && togglingDeviceDiagnosticId === item.rawId;
                         const isDeleting = !!item.rawId && deletingDeviceId === item.rawId;
 
                         return (
@@ -3087,6 +3146,35 @@ export default function App() {
                             <td title={item.lastSeenRaw ? String(item.lastSeenRaw) : ""}>{item.lastSeen}</td>
                             <td>
                               <span className={getBadgeClass(item.state)}>{item.state}</span>
+                            </td>
+                            <td>
+                              {typeof item.diagnosticEnabled === "boolean" ? (
+                                <label
+                                  className="switch"
+                                  title={
+                                    item.diagnosticEnabled
+                                      ? "Diagnóstico activado"
+                                      : "Diagnóstico desactivado"
+                                  }
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={item.diagnosticEnabled}
+                                    disabled={!item.rawId || isDeleting || loadingDevices || isTogglingDiagnostic}
+                                    onChange={(e) => {
+                                      const nextEnabled = e.target.checked;
+                                      if (!item.rawId) return;
+                                      handleSetDeviceDiagnosticEnabled({
+                                        id: item.rawId,
+                                        enabled: nextEnabled,
+                                      });
+                                    }}
+                                  />
+                                  <span className="switch-track" />
+                                </label>
+                              ) : (
+                                <span className="muted">-</span>
+                              )}
                             </td>
                             <td>
                               <div className="row-actions">

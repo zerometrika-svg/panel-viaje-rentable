@@ -612,6 +612,58 @@ tbody tr:hover td {
   font-size: 13px;
 }
 
+.switch {
+  display: inline-flex;
+  align-items: center;
+  position: relative;
+  user-select: none;
+}
+
+.switch input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.switch-track {
+  width: 34px;
+  height: 18px;
+  border-radius: 999px;
+  background: rgba(2, 6, 23, 0.28);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  position: relative;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, opacity 120ms ease;
+}
+
+.switch-track::after {
+  content: "";
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: rgba(226, 232, 240, 0.78);
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  transition: transform 120ms ease, background 120ms ease;
+}
+
+.switch input:checked + .switch-track {
+  background: rgba(34, 211, 238, 0.18);
+  border-color: rgba(34, 211, 238, 0.28);
+}
+
+.switch input:checked + .switch-track::after {
+  transform: translateX(16px);
+  background: rgba(34, 211, 238, 0.95);
+}
+
+.switch input:disabled + .switch-track {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .ghost-btn {
   background: rgba(2, 6, 23, 0.28);
   border: 1px solid rgba(148, 163, 184, 0.14);
