@@ -27,11 +27,15 @@ export async function getOfferFailureDiagnostics({ baseUrl, signal } = {}) {
 }
 
 export async function reviewOfferFailureDiagnostic({ baseUrl, id, note } = {}) {
-  const url = new URL(`/admin/diagnostics/offer-failure/${encodeURIComponent(String(id))}/review`, baseUrl);
-  const body = note ? JSON.stringify({ note: String(note) }) : null;
+  const url = new URL(
+    `/admin/diagnostics/offer-failure/${encodeURIComponent(String(id))}/review`,
+    baseUrl
+  );
+  const trimmedNote = typeof note === "string" ? note.trim() : note;
+  const body = JSON.stringify(trimmedNote ? { note: String(trimmedNote) } : {});
   const res = await fetch(url, {
     method: "POST",
-    headers: body ? { "Content-Type": "application/json" } : undefined,
+    headers: { "Content-Type": "application/json" },
     body,
   });
   const payload = await safeJson(res);
@@ -57,4 +61,3 @@ export async function deleteReviewedOfferFailureDiagnostics({ baseUrl } = {}) {
   if (payload?.ok === false) return { ok: false, status: res.status, payload };
   return { ok: true, status: res.status, payload };
 }
-
