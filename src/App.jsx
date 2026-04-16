@@ -562,39 +562,27 @@ export default function App() {
     setTogglingDeviceDiagnosticId(String(id));
     setDevicesActionError("");
     try {
-      const body = JSON.stringify({ diagnostic_enabled: !!enabled });
+      const body = JSON.stringify({ enabled: !!enabled });
       const headers = { "Content-Type": "application/json" };
 
-      const candidates = [
-        { url: `${API_BASE_URL}/admin/devices/${encodeURIComponent(id)}/diagnostic-enabled`, method: "POST" },
-        { url: `${API_BASE_URL}/admin/devices/${encodeURIComponent(id)}/diagnostic`, method: "POST" },
-        { url: `${API_BASE_URL}/admin/devices/${encodeURIComponent(id)}`, method: "PATCH" },
-        { url: `${API_BASE_URL}/admin/devices/${encodeURIComponent(id)}`, method: "PUT" },
-      ];
+      const res = await fetch(`${API_BASE_URL}/admin/devices/${encodeURIComponent(id)}/diagnostic`, {
+        method: "POST",
+        headers,
+        body,
+      });
 
-      let lastStatus = 0;
-      for (const candidate of candidates) {
-        // eslint-disable-next-line no-await-in-loop
-        const res = await fetch(candidate.url, { method: candidate.method, headers, body });
-        lastStatus = res.status;
-        if (res.status === 404 || res.status === 405) continue;
-
-        if (!res.ok) {
-          setDevicesActionError(`Error al actualizar diagnóstico (${res.status})`);
-          return;
-        }
-
-        const payload = await res.json().catch(() => null);
-        if (payload && payload?.ok === false) {
-          setDevicesActionError("Error al actualizar diagnóstico");
-          return;
-        }
-
-        await fetchDevices();
+      if (!res.ok) {
+        setDevicesActionError(`Error al actualizar diagnóstico (${res.status})`);
         return;
       }
 
-      setDevicesActionError(`Endpoint no disponible para diagnóstico (${lastStatus || "?"})`);
+      const payload = await res.json().catch(() => null);
+      if (payload && payload?.ok === false) {
+        setDevicesActionError("Error al actualizar diagnóstico");
+        return;
+      }
+
+      await fetchDevices();
     } catch {
       setDevicesActionError("Error al actualizar diagnóstico");
     } finally {
