@@ -3,13 +3,18 @@ import {
   Search,
   LayoutDashboard,
   AlertTriangle,
+  AlertCircle,
   KeyRound,
   Smartphone,
-  FlaskConical,
-  GitBranch,
+  Timer,
+  Download,
+  TrendingUp,
+  ListOrdered,
   Copy,
   Bot,
-  Eye
+  Eye,
+  HelpCircle,
+  Plus
 } from "lucide-react";
 import "./App.css";
 
@@ -136,6 +141,8 @@ export default function App() {
   const [filterStatus, setFilterStatus] = useState("all");
   const [filterType, setFilterType] = useState("all");
   const [selectedErrorId, setSelectedErrorId] = useState("");
+  const [errorModalId, setErrorModalId] = useState("");
+  const [errorDescriptionHidden, setErrorDescriptionHidden] = useState(false);
 
   const [errorReports, setErrorReports] = useState([]);
   const [loadingErrors, setLoadingErrors] = useState(false);
@@ -172,6 +179,8 @@ export default function App() {
   const [copyDeviceError, setCopyDeviceError] = useState("");
   const copyDeviceTimeoutRef = useRef(0);
   const copyDeviceErrorTimeoutRef = useRef(0);
+  const [copiedErrorDescription, setCopiedErrorDescription] = useState(false);
+  const copiedErrorDescriptionTimeoutRef = useRef(0);
   const [nowTs, setNowTs] = useState(() => Date.now());
 
   const [editingDemo, setEditingDemo] = useState(null);
@@ -186,6 +195,8 @@ export default function App() {
   const [releaseCodeValue, setReleaseCodeValue] = useState("");
   const [releaseApkUrlValue, setReleaseApkUrlValue] = useState("");
   const [releaseMessageValue, setReleaseMessageValue] = useState("");
+  const [releaseInfoModalOpen, setReleaseInfoModalOpen] = useState(false);
+  const [createReleaseModalOpen, setCreateReleaseModalOpen] = useState(false);
 
   useEffect(() => {
     try {
@@ -485,6 +496,36 @@ export default function App() {
     }
   };
 
+  const handleCopyErrorDescription = async (value) => {
+    const text = value === null || value === undefined ? "" : String(value);
+    if (!text) return;
+
+    try {
+      if (navigator?.clipboard?.writeText && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const el = document.createElement("textarea");
+        el.value = text;
+        el.setAttribute("readonly", "");
+        el.style.position = "absolute";
+        el.style.left = "-9999px";
+        document.body.appendChild(el);
+        el.select();
+        document.execCommand("copy");
+        document.body.removeChild(el);
+      }
+
+      setCopiedErrorDescription(true);
+      window.clearTimeout(copiedErrorDescriptionTimeoutRef.current);
+      copiedErrorDescriptionTimeoutRef.current = window.setTimeout(
+        () => setCopiedErrorDescription(false),
+        1200
+      );
+    } catch {
+      setCopiedErrorDescription(false);
+    }
+  };
+
   const handleReviewError = async (id) => {
     if (id === null || id === undefined || id === "") {
       setReviewErrorActionError("No se pudo ejecutar la acción (id inválido)");
@@ -648,7 +689,8 @@ export default function App() {
             : item?.status === "resolved"
               ? "Resuelto"
               : item?.status || "-";
-      const createdAt = item?.created_at || "-";
+      const createdAtRaw = item?.created_at || "-";
+      const createdAt = formatDateTimeSeconds(createdAtRaw);
       const userEmail = item?.user_email || "-";
 
       return {
@@ -664,6 +706,7 @@ export default function App() {
         source,
         status,
         createdAt,
+        createdAtRaw,
         deviceHash,
         userEmail,
       };
@@ -731,6 +774,47 @@ export default function App() {
       null
     );
   }, [errorRows, selectedErrorId]);
+
+  const errorModalError = useMemo(() => {
+    if (!errorModalId) return null;
+    return (
+      errorRows.find((row) => row.rawId === errorModalId) ||
+      errorRows.find((row) => row.id === errorModalId) ||
+      null
+    );
+  }, [errorRows, errorModalId]);
+
+  useEffect(() => {
+    if (!errorModalId) return;
+    const exists = errorRows.some((row) => row.rawId === errorModalId || row.id === errorModalId);
+    if (!exists) setErrorModalId("");
+  }, [errorRows, errorModalId]);
+
+  useEffect(() => {
+    if (!errorModalId) return;
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") setErrorModalId("");
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [errorModalId]);
+
+  useEffect(() => {
+    if (!releaseInfoModalOpen && !createReleaseModalOpen) return;
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") {
+        setReleaseInfoModalOpen(false);
+        setCreateReleaseModalOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [releaseInfoModalOpen, createReleaseModalOpen]);
+
+  useEffect(() => {
+    if (!errorModalId) return;
+    setErrorDescriptionHidden(true);
+  }, [errorModalId]);
 
   const errorStats = useMemo(() => {
     const total = errorRows.length;
@@ -800,7 +884,8 @@ export default function App() {
       const android = item?.android_version || item?.android || "-";
       const version = item?.app_version || item?.version || "-";
       const license = item?.license_id || item?.license || "-";
-      const lastSeen = item?.last_seen_at || item?.lastSeen || "-";
+      const lastSeenRaw = item?.last_seen_at || item?.lastSeen || "-";
+      const lastSeen = formatDateTimeSeconds(lastSeenRaw);
       const state =
         typeof item?.is_active === "boolean"
           ? item.is_active
@@ -808,7 +893,7 @@ export default function App() {
             : "Inactivo"
           : "-";
 
-      return { rawId, id, model, android, version, license, lastSeen, state };
+      return { rawId, id, model, android, version, license, lastSeen, lastSeenRaw, state };
     });
   }, [devices]);
 
@@ -909,6 +994,106 @@ export default function App() {
     return sorted[0] || active[0] || null;
   }, [releaseRows]);
 
+  const filteredReleaseRows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return releaseRows;
+
+    return releaseRows.filter((row) => {
+      const versionName = row?.versionName ? String(row.versionName) : "";
+      const versionCode = row?.versionCode === null || row?.versionCode === undefined ? "" : String(row.versionCode);
+      const apkUrl = row?.apkUrl ? String(row.apkUrl) : "";
+      const message = row?.message ? String(row.message) : "";
+      const status = row?.status ? String(row.status) : "";
+      const createdAt = row?.createdAt ? String(row.createdAt) : "";
+      const createdAtLabel = formatDateTime(row?.createdAt);
+
+      return (
+        versionName.toLowerCase().includes(q) ||
+        versionCode.toLowerCase().includes(q) ||
+        apkUrl.toLowerCase().includes(q) ||
+        message.toLowerCase().includes(q) ||
+        status.toLowerCase().includes(q) ||
+        createdAt.toLowerCase().includes(q) ||
+        (createdAtLabel ? String(createdAtLabel).toLowerCase().includes(q) : false)
+      );
+    });
+  }, [releaseRows, search]);
+
+  const filteredDeviceRows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return deviceRows;
+
+    return deviceRows.filter((row) => {
+      const id = row?.id ? String(row.id) : "";
+      const model = row?.model ? String(row.model) : "";
+      const android = row?.android ? String(row.android) : "";
+      const version = row?.version ? String(row.version) : "";
+      const license = row?.license ? String(row.license) : "";
+      const state = row?.state ? String(row.state) : "";
+      const lastSeenRaw = row?.lastSeenRaw ? String(row.lastSeenRaw) : "";
+      const lastSeen = row?.lastSeen ? String(row.lastSeen) : "";
+
+      return (
+        id.toLowerCase().includes(q) ||
+        model.toLowerCase().includes(q) ||
+        android.toLowerCase().includes(q) ||
+        version.toLowerCase().includes(q) ||
+        license.toLowerCase().includes(q) ||
+        state.toLowerCase().includes(q) ||
+        lastSeenRaw.toLowerCase().includes(q) ||
+        lastSeen.toLowerCase().includes(q)
+      );
+    });
+  }, [deviceRows, search]);
+
+  const filteredDemoRows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return demoRows;
+
+    return demoRows.filter((row) => {
+      const deviceName = row?.deviceName ? String(row.deviceName) : "";
+      const status = row?.status ? String(row.status) : "";
+      const startedAt = row?.startedAt ? String(row.startedAt) : "";
+      const expiresAt = row?.expiresAt ? String(row.expiresAt) : "";
+      const startedAtLabel = formatDateTimeSeconds(row?.startedAt);
+      const expiresAtLabel = formatDateTimeSeconds(row?.expiresAt);
+
+      return (
+        deviceName.toLowerCase().includes(q) ||
+        status.toLowerCase().includes(q) ||
+        startedAt.toLowerCase().includes(q) ||
+        expiresAt.toLowerCase().includes(q) ||
+        (startedAtLabel ? String(startedAtLabel).toLowerCase().includes(q) : false) ||
+        (expiresAtLabel ? String(expiresAtLabel).toLowerCase().includes(q) : false)
+      );
+    });
+  }, [demoRows, search]);
+
+  const filteredLicenseRows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return licenseRows;
+
+    return licenseRows.filter((row) => {
+      const code = row?.code ? String(row.code) : "";
+      const plan = row?.plan ? String(row.plan) : "";
+      const assignedTo = row?.assignedTo ? String(row.assignedTo) : "";
+      const device = row?.device ? String(row.device) : "";
+      const expiresAt = row?.expiresAt ? String(row.expiresAt) : "";
+      const status = row?.status ? String(row.status) : "";
+      const expiresAtLabel = formatDateTimeSeconds(row?.expiresAt);
+
+      return (
+        code.toLowerCase().includes(q) ||
+        plan.toLowerCase().includes(q) ||
+        assignedTo.toLowerCase().includes(q) ||
+        device.toLowerCase().includes(q) ||
+        expiresAt.toLowerCase().includes(q) ||
+        status.toLowerCase().includes(q) ||
+        (expiresAtLabel ? String(expiresAtLabel).toLowerCase().includes(q) : false)
+      );
+    });
+  }, [licenseRows, search]);
+
   const handleCreateRelease = async () => {
     const versionName = releaseNameValue.trim();
     const versionCodeRaw = releaseCodeValue.trim();
@@ -959,6 +1144,7 @@ export default function App() {
       setReleaseApkUrlValue("");
       setReleaseMessageValue("");
       await fetchReleases();
+      setCreateReleaseModalOpen(false);
     } catch {
       setReleasesActionError("Error al crear release");
     } finally {
@@ -1129,10 +1315,10 @@ export default function App() {
   return (
     <div className="layout">
       <aside className="sidebar">
-        <div className="brand-pill">VR Admin</div>
+        <img className="brand-logo" src="/logo.png" alt="Viaje Rentable" />
         <h1>Panel operativo</h1>
         <p className="sidebar-text">
-          Control de errores, licencias, dispositivos, demos y versiones.
+          Control de errores, licencias, dispositivos, demos y actualizaciones.
         </p>
 
         <nav className="sidebar-nav">
@@ -1140,43 +1326,43 @@ export default function App() {
             className={tab === "inicio" ? "nav-item active" : "nav-item"}
             onClick={() => setTab("inicio")}
           >
-            <LayoutDashboard size={16} style={{ marginRight: 10 }} />
-            Inicio
-          </button>
-          <button
-            className={tab === "errores" ? "nav-item active" : "nav-item"}
-            onClick={() => setTab("errores")}
-          >
-            <AlertTriangle size={16} style={{ marginRight: 10 }} />
-            Errores
-          </button>
-          <button
-            className={tab === "licencias" ? "nav-item active" : "nav-item"}
-            onClick={() => setTab("licencias")}
-          >
-            <KeyRound size={16} style={{ marginRight: 10 }} />
-            Licencias
+            <LayoutDashboard size={16} />
+            <span className="nav-label">Inicio</span>
           </button>
           <button
             className={tab === "dispositivos" ? "nav-item active" : "nav-item"}
             onClick={() => setTab("dispositivos")}
           >
-            <Smartphone size={16} style={{ marginRight: 10 }} />
-            Dispositivos
+            <Smartphone size={16} />
+            <span className="nav-label">Dispositivos</span>
+          </button>
+          <button
+            className={tab === "licencias" ? "nav-item active" : "nav-item"}
+            onClick={() => setTab("licencias")}
+          >
+            <KeyRound size={16} />
+            <span className="nav-label">Licencias</span>
           </button>
           <button
             className={tab === "demos" ? "nav-item active" : "nav-item"}
             onClick={() => setTab("demos")}
           >
-            <FlaskConical size={16} style={{ marginRight: 10 }} />
-            Demos
+            <Timer size={16} />
+            <span className="nav-label">Demos</span>
+          </button>
+          <button
+            className={tab === "errores" ? "nav-item active" : "nav-item"}
+            onClick={() => setTab("errores")}
+          >
+            <AlertTriangle size={16} />
+            <span className="nav-label">Errores</span>
           </button>
           <button
             className={tab === "versiones" ? "nav-item active" : "nav-item"}
             onClick={() => setTab("versiones")}
           >
-            <GitBranch size={16} style={{ marginRight: 10 }} />
-            Versiones
+            <Download size={16} />
+            <span className="nav-label">Actualizaciones</span>
           </button>
         </nav>
       </aside>
@@ -1220,7 +1406,7 @@ export default function App() {
                 title="Demos activas"
                 value={String(dashboardStats.demosActive)}
                 hint="En curso"
-                icon={FlaskConical}
+                icon={Timer}
               />
               <MetricCard
                 title="Versión actual"
@@ -1265,8 +1451,21 @@ export default function App() {
               .errors-compact .metric-card h3 { font-size: 18px; margin: 6px 0 0; }
               .errors-compact .metric-card .hint { margin-top: 6px; font-size: 11.5px; }
               .errors-compact .metric-card .icon-box { padding: 10px; border-radius: 14px; }
-              .errors-compact .errors-top-list { margin: 6px 0 0; padding-left: 16px; }
-              .errors-compact .errors-top-list li { margin: 3px 0; font-size: 12.5px; }
+              .errors-compact .errors-top-list { margin: 6px 0 0; padding-left: 0; list-style-position: inside; }
+              .errors-compact .errors-top-list li { margin: 2px 0; font-size: 12px; line-height: 1.2; display: grid; grid-template-columns: 1fr auto; gap: 6px; }
+              .errors-compact .errors-top-list li .mono { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+              .errors-compact .errors-top-list li .muted { white-space: nowrap; }
+              .errors-compact .top-errors-card { align-items: flex-start; }
+              .errors-compact .top-errors-card > div:first-child { min-width: 0; }
+              .errors-compact .top-errors-card .icon-box { align-self: flex-start; padding: 8px; border-radius: 12px; }
+              .errors-compact .errors-row { cursor: pointer; }
+              .errors-compact .errors-row.is-selected td { background: rgba(37, 99, 235, 0.10); }
+              .errors-compact .detail-row { display: flex; align-items: center; justify-content: flex-start; gap: 10px; margin-bottom: 6px; }
+              .errors-compact .detail-row .detail-label { margin: 0; }
+              .errors-compact .desc-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+              .errors-compact .desc-toggle { padding: 6px 10px; line-height: 1; }
+              .errors-compact .error-description { max-height: min(55vh, 520px); overflow: auto; white-space: pre-wrap; padding: 10px; font-size: 12.25px; line-height: 1.3; }
+              .errors-compact .modal { width: min(640px, calc(100vw - 56px)); }
             `}</style>
 
             <div className="errors-compact">
@@ -1330,7 +1529,7 @@ export default function App() {
                   title="Pendientes"
                   value={String(errorStats.pending)}
                   hint="Sin revisar"
-                  icon={GitBranch}
+                  icon={AlertCircle}
                 />
                 <MetricCard
                   title="Revisados"
@@ -1342,9 +1541,9 @@ export default function App() {
                   title="Más frecuente"
                   value={errorStats.mostFrequentType}
                   hint={`${errorStats.mostFrequentTypeCount} reportes`}
-                  icon={Bot}
+                  icon={TrendingUp}
                 />
-                <div className="card metric-card">
+                <div className="card metric-card top-errors-card">
                   <div>
                     <p className="muted">Top 3 errores</p>
                     {errorStats.topTypes.length === 0 ? (
@@ -1359,10 +1558,9 @@ export default function App() {
                         ))}
                       </ol>
                     )}
-                    <p className="hint">Por error_type</p>
                   </div>
                   <div className="icon-box">
-                    <LayoutDashboard size={20} />
+                    <ListOrdered size={20} />
                   </div>
                 </div>
               </div>
@@ -1396,8 +1594,21 @@ export default function App() {
                         </tr>
                       </thead>
                       <tbody>
-                        {filteredErrors.map((item, index) => (
-                          <tr key={`${item.id}-${index}`}>
+                        {filteredErrors.map((item, index) => {
+                          const rowId = item.rawId ? String(item.rawId) : String(item.id);
+                          return (
+                          <tr
+                            key={`${item.id}-${index}`}
+                            className={
+                              (selectedErrorId && (selectedErrorId === rowId || selectedErrorId === String(item.id)))
+                                ? "errors-row is-selected"
+                                : "errors-row"
+                            }
+                            onClick={() => {
+                              setSelectedErrorId(rowId);
+                              setErrorModalId(rowId);
+                            }}
+                          >
                             <td>{item.type}</td>
                             <td>{item.screen}</td>
                             <td>{item.appVersion}</td>
@@ -1405,61 +1616,93 @@ export default function App() {
                             <td>
                               <span className={getBadgeClass(item.status)}>{item.status}</span>
                             </td>
-                            <td>{item.createdAt}</td>
+                            <td title={item.createdAtRaw ? String(item.createdAtRaw) : ""}>{item.createdAt}</td>
                             <td>
                               <button
                                 className="ghost-btn"
-                                onClick={() => setSelectedErrorId(item.rawId ? String(item.rawId) : String(item.id))}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setSelectedErrorId(rowId);
+                                  setErrorModalId(rowId);
+                                }}
                               >
                                 <Eye size={14} /> Ver
                               </button>
                             </td>
                           </tr>
-                        ))}
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
                 )}
               </div>
+            </div>
 
-              <div className="card">
-                {loadingErrors ? (
-                  <p className="muted">Cargando errores...</p>
-                ) : errorsError ? (
-                  <p className="muted">{errorsError}</p>
-                ) : !selectedError ? (
-                  <p className="muted">No hay errores</p>
-                ) : (
-                  <>
-                    <div className="detail-header">
-                      <div>
-                        <h3>{selectedError.type}</h3>
-                      </div>
-                      <span className={getBadgeClass(selectedError.status)}>{selectedError.status}</span>
+            {errorModalId && errorModalError && (
+              <div
+                className="modal-backdrop"
+                role="dialog"
+                aria-modal="true"
+                onClick={() => setErrorModalId("")}
+              >
+                <div className="modal" onClick={(event) => event.stopPropagation()}>
+                  <div className="modal-header">
+                    <div>
+                      <h3>{errorModalError.type}</h3>
                     </div>
+                    <span className={getBadgeClass(errorModalError.status)}>{errorModalError.status}</span>
+                  </div>
 
-                    <div className="detail-grid">
+                  <div className="modal-body">
+                    <div className="detail-grid" style={{ marginTop: 0 }}>
                       <div className="detail-box">
                         <span>Dispositivo</span>
-                        <strong>{selectedError.deviceName}</strong>
+                        <strong>{errorModalError.deviceName}</strong>
                       </div>
                       <div className="detail-box">
                         <span>Versión</span>
-                        <strong>{selectedError.appVersion}</strong>
+                        <strong>{errorModalError.appVersion}</strong>
                       </div>
                       <div className="detail-box">
                         <span>Pantalla</span>
-                        <strong>{selectedError.screen}</strong>
+                        <strong>{errorModalError.screen}</strong>
                       </div>
                       <div className="detail-box">
                         <span>Fecha</span>
-                        <strong>{selectedError.createdAt}</strong>
+                        <strong>{errorModalError.createdAt}</strong>
                       </div>
                     </div>
 
                     <div className="detail-section">
-                      <p className="detail-label">Descripción</p>
-                      <div className="detail-content">{selectedError.description}</div>
+                      <div className="detail-row desc-actions">
+                        <p className="detail-label">Descripción</p>
+                        <button
+                          type="button"
+                          className="ghost-btn icon-btn desc-toggle"
+                          title={errorDescriptionHidden ? "Mostrar descripción" : "Ocultar descripción"}
+                          onClick={() => {
+                            setErrorDescriptionHidden((prev) => {
+                              const next = !prev;
+                              return next;
+                            });
+                          }}
+                        >
+                          {errorDescriptionHidden ? "+" : "-"}
+                        </button>
+                        <button
+                          type="button"
+                          className="ghost-btn icon-btn"
+                          title="Copiar descripción"
+                          onClick={() => handleCopyErrorDescription(errorModalError.description)}
+                        >
+                          <Copy size={14} /> Copiar
+                        </button>
+                        {copiedErrorDescription && <span className="muted">Copiado</span>}
+                      </div>
+                      {!errorDescriptionHidden && (
+                        <div className="detail-content error-description">{errorModalError.description}</div>
+                      )}
                     </div>
 
                     <div className="detail-section">
@@ -1468,71 +1711,63 @@ export default function App() {
                         <table>
                           <tbody>
                             <tr>
-                              <td className="muted">Device hash</td>
-                              <td>{selectedError.deviceHash}</td>
-                            </tr>
-                            <tr>
-                              <td className="muted">Source</td>
-                              <td>{selectedError.source}</td>
-                            </tr>
-                            <tr>
                               <td className="muted">Android</td>
-                              <td>{selectedError.androidVersion}</td>
+                              <td>{errorModalError.androidVersion}</td>
                             </tr>
                             <tr>
-                              <td className="muted">Country</td>
-                              <td>{selectedError.country}</td>
-                            </tr>
-                            <tr>
-                              <td className="muted">User email</td>
-                              <td>{selectedError.userEmail || "-"}</td>
+                              <td className="muted">Device hash</td>
+                              <td>{errorModalError.deviceHash}</td>
                             </tr>
                           </tbody>
                         </table>
                       </div>
                     </div>
 
-                    <div className="detail-section">
-                      <p className="detail-label">Logs resumidos</p>
-                      <div className="log-box">Sin logs</div>
-                    </div>
-
                     {!!reviewErrorActionError && <p className="muted">{reviewErrorActionError}</p>}
-                    <div className="action-row">
-                      <button
-                        className="primary-btn"
-                        disabled={
-                          selectedError.status !== "Pendiente" ||
-                          !selectedError.rawId ||
-                          reviewingErrorId === selectedError.rawId ||
-                          loadingErrors
-                        }
-                        onClick={() => handleReviewError(selectedError.rawId)}
-                      >
-                        {selectedError.status === "Revisado"
-                          ? "Ya revisado"
-                          : reviewingErrorId === selectedError.rawId
-                            ? "Procesando..."
-                            : "Marcar revisado"}
-                      </button>
-                      <button
-                        className="secondary-btn danger-btn"
-                        disabled={
-                          !selectedError.rawId ||
-                          deletingErrorId === selectedError.rawId ||
-                          deletingReviewed ||
-                          deletingAll ||
-                          loadingErrors
-                        }
-                        onClick={() => handleDeleteError(selectedError.rawId)}
-                      >
-                        {deletingErrorId === selectedError.rawId ? "Eliminando..." : "Eliminar"}
-                      </button>
-                    </div>
-                  </>
-                )}
+                    {!!deleteErrorActionError && <p className="muted">{deleteErrorActionError}</p>}
+                  </div>
+
+                  <div className="modal-actions">
+                    <button
+                      className="secondary-btn"
+                      type="button"
+                      onClick={() => setErrorModalId("")}
+                    >
+                      Cerrar
+                    </button>
+                    <button
+                      className="primary-btn"
+                      disabled={
+                        errorModalError.status !== "Pendiente" ||
+                        !errorModalError.rawId ||
+                        reviewingErrorId === errorModalError.rawId ||
+                        loadingErrors
+                      }
+                      onClick={() => handleReviewError(errorModalError.rawId)}
+                    >
+                      {errorModalError.status === "Revisado"
+                        ? "Ya revisado"
+                        : reviewingErrorId === errorModalError.rawId
+                          ? "Procesando..."
+                          : "Marcar revisado"}
+                    </button>
+                    <button
+                      className="secondary-btn danger-btn"
+                      disabled={
+                        !errorModalError.rawId ||
+                        deletingErrorId === errorModalError.rawId ||
+                        deletingReviewed ||
+                        deletingAll ||
+                        loadingErrors
+                      }
+                      onClick={() => handleDeleteError(errorModalError.rawId)}
+                    >
+                      {deletingErrorId === errorModalError.rawId ? "Eliminando..." : "Eliminar"}
+                    </button>
+                  </div>
+                </div>
               </div>
-            </div>
+            )}
             </div>
           </>
         )}
@@ -1544,11 +1779,42 @@ export default function App() {
               subtitle="Sección en pausa: licencias no se usan por ahora."
             />
             <div className="card">
-              <p className="muted">
-                Para evitar confusión, esta vista no muestra datos de licencias en este momento.
-              </p>
-              {(loadingLicenses || licensesError || licensesActionError) && (
-                <p className="muted">Estado: la sincronización de licencias permanece activa en segundo plano.</p>
+              {!!licensesActionError && <p className="muted">{licensesActionError}</p>}
+              {loadingLicenses ? (
+                <p className="muted">Cargando licencias...</p>
+              ) : licensesError ? (
+                <p className="muted">{licensesError}</p>
+              ) : filteredLicenseRows.length === 0 ? (
+                <p className="muted">{licenseRows.length === 0 ? "No hay licencias" : "Sin resultados"}</p>
+              ) : (
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Código</th>
+                        <th>Plan</th>
+                        <th>Asignado</th>
+                        <th>Dispositivo</th>
+                        <th>Vence</th>
+                        <th>Estado</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredLicenseRows.map((row) => (
+                        <tr key={row.rawId ? row.rawId : `${row.code}-${row.expiresAt}`}>
+                          <td className="mono">{row.code}</td>
+                          <td>{row.plan}</td>
+                          <td>{row.assignedTo}</td>
+                          <td className="mono">{row.device}</td>
+                          <td>{formatDateTimeSeconds(row.expiresAt)}</td>
+                          <td>
+                            <span className={getBadgeClass(row.status)}>{row.status}</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </div>
           </>
@@ -1560,15 +1826,15 @@ export default function App() {
               title="Dispositivos"
               subtitle="Acá ves qué equipo está usando cada cuenta y quién quedó con versión vieja."
             />
-            <div className="card">
+            <div className="card devices-card">
               {!!devicesActionError && <p className="muted">{devicesActionError}</p>}
               {!!copyDeviceError && <p className="muted">{copyDeviceError}</p>}
               {loadingDevices ? (
                 <p className="muted">Cargando dispositivos...</p>
               ) : devicesError ? (
                 <p className="muted">{devicesError}</p>
-              ) : deviceRows.length === 0 ? (
-                <p className="muted">No hay dispositivos</p>
+              ) : filteredDeviceRows.length === 0 ? (
+                <p className="muted">{deviceRows.length === 0 ? "No hay dispositivos" : "Sin resultados"}</p>
               ) : (
                 <div className="table-wrap">
                   <table className="devices-table">
@@ -1585,7 +1851,7 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {deviceRows.map((item, index) => {
+                      {filteredDeviceRows.map((item, index) => {
                         const canToggle = item.state === "Activo" || item.state === "Inactivo";
                         const nextLabel =
                           item.state === "Activo"
@@ -1619,7 +1885,7 @@ export default function App() {
                             <td>{item.android}</td>
                             <td>{item.version}</td>
                             <td>{item.license}</td>
-                            <td>{item.lastSeen}</td>
+                            <td title={item.lastSeenRaw ? String(item.lastSeenRaw) : ""}>{item.lastSeen}</td>
                             <td>
                               <span className={getBadgeClass(item.state)}>{item.state}</span>
                             </td>
@@ -1666,8 +1932,8 @@ export default function App() {
                 <p className="muted">Cargando demos...</p>
               ) : demosError ? (
                 <p className="muted">{demosError}</p>
-              ) : demoRows.length === 0 ? (
-                <p className="muted">No hay demos</p>
+              ) : filteredDemoRows.length === 0 ? (
+                <p className="muted">{demoRows.length === 0 ? "No hay demos" : "Sin resultados"}</p>
               ) : (
                 <div className="table-wrap">
                   <table className="demos-table">
@@ -1682,7 +1948,7 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {demoRows.map((row) => {
+                      {filteredDemoRows.map((row) => {
                         const remainingLabel = getRemainingLabel(row.expiresAt, nowTs);
                         const isSaving = savingDemoId === row.id;
 
@@ -1769,8 +2035,8 @@ export default function App() {
         {tab === "versiones" && (
           <>
             <SectionTitle
-              title="Versiones"
-              subtitle="Administrá releases obligatorias: una sola puede estar activa y fuerza actualización."
+              title="Actualizaciones"
+              subtitle="Administrá actualizaciones obligatorias: una sola puede estar activa."
             />
             {!!releasesActionError && <p className="muted">{releasesActionError}</p>}
             {loadingReleases ? (
@@ -1779,116 +2045,24 @@ export default function App() {
               <p className="muted">{releasesError}</p>
             ) : (
               <>
-                <div className="releases-grid">
-                  <div className="card">
-                    <div className="detail-header">
-                      <div>
-                        <p className="muted">Release activa actual</p>
-                        <h3 style={{ margin: 0 }}>{activeRelease?.versionName || "-"}</h3>
-                      </div>
-                      {activeRelease?.apkUrl && activeRelease.apkUrl !== "-" && (
-                        <a
-                          className="ghost-btn"
-                          href={activeRelease.apkUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          Abrir APK
-                        </a>
-                      )}
-                    </div>
-
-                    <div className="detail-grid">
-                      <div className="detail-box">
-                        <span>version_code</span>
-                        <div className="mono">{activeRelease?.versionCode ?? "-"}</div>
-                      </div>
-                      <div className="detail-box">
-                        <span>Estado</span>
-                        <div>
-                          <span className={activeRelease?.isActive ? "badge badge-green" : "badge badge-yellow"}>
-                            {activeRelease?.status || "Inactiva"}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="detail-box">
-                        <span>created_at</span>
-                        <div>{formatDateTime(activeRelease?.createdAt)}</div>
-                      </div>
-                      <div className="detail-box">
-                        <span>apk_url</span>
-                        <div className="mono">{activeRelease?.apkUrl || "-"}</div>
-                      </div>
-                    </div>
-
-                    <div className="detail-section">
-                      <div className="detail-label">Mensaje</div>
-                      <div className="detail-content">{activeRelease?.message || "-"}</div>
-                    </div>
-                  </div>
-
-                  <div className="card">
-                    <div className="detail-header">
-                      <div>
-                        <p className="muted">Nueva release</p>
-                        <h3 style={{ margin: 0 }}>Crear (queda activa)</h3>
-                      </div>
-                    </div>
-
-                    <div className="release-form-grid">
-                      <div>
-                        <p className="muted">version_name</p>
-                        <input
-                          type="text"
-                          value={releaseNameValue}
-                          onChange={(e) => setReleaseNameValue(e.target.value)}
-                          className="demo-input"
-                          placeholder="1.0.9"
-                        />
-                      </div>
-                      <div>
-                        <p className="muted">version_code</p>
-                        <input
-                          type="text"
-                          inputMode="numeric"
-                          value={releaseCodeValue}
-                          onChange={(e) => setReleaseCodeValue(e.target.value)}
-                          className="demo-input"
-                          placeholder="109"
-                        />
-                      </div>
-                      <div className="release-form-full">
-                        <p className="muted">apk_url</p>
-                        <input
-                          type="text"
-                          value={releaseApkUrlValue}
-                          onChange={(e) => setReleaseApkUrlValue(e.target.value)}
-                          className="demo-input"
-                          placeholder="https://..."
-                        />
-                      </div>
-                      <div className="release-form-full">
-                        <p className="muted">message</p>
-                        <textarea
-                          rows={3}
-                          value={releaseMessageValue}
-                          onChange={(e) => setReleaseMessageValue(e.target.value)}
-                          className="demo-input"
-                          placeholder="Qué cambia y por qué es obligatoria"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="modal-actions">
-                      <button
-                        type="button"
-                        className="primary-btn"
-                        disabled={creatingRelease || loadingReleases || activatingReleaseId !== "" || deletingReleaseId !== ""}
-                        onClick={handleCreateRelease}
-                      >
-                        {creatingRelease ? "Creando..." : "Crear y activar"}
-                      </button>
-                    </div>
+                <div style={{ marginBottom: 12, display: "flex", justifyContent: "center" }}>
+                  <div className="versions-actions">
+                    <button
+                      type="button"
+                      className="ghost-btn icon-btn big-icon-btn"
+                      title="Crear nueva release"
+                      onClick={() => setCreateReleaseModalOpen(true)}
+                    >
+                      <Plus size={26} />
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-btn icon-btn big-icon-btn"
+                      title="Ver release activa"
+                      onClick={() => setReleaseInfoModalOpen(true)}
+                    >
+                      <HelpCircle size={26} />
+                    </button>
                   </div>
                 </div>
 
@@ -1897,24 +2071,24 @@ export default function App() {
                     <table>
                       <thead>
                         <tr>
-                          <th>version_name</th>
-                          <th>version_code</th>
-                          <th>apk_url</th>
-                          <th>message</th>
+                          <th>Version</th>
+                          <th>Version Codigo</th>
+                          <th>Link</th>
+                          <th>Mensaje</th>
                           <th>Estado</th>
-                          <th>created_at</th>
+                          <th>Creado</th>
                           <th>Acciones</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {releaseRows.length === 0 ? (
+                        {filteredReleaseRows.length === 0 ? (
                           <tr>
                             <td colSpan={7} className="muted">
-                              No hay releases
+                              {releaseRows.length === 0 ? "No hay releases" : "Sin resultados"}
                             </td>
                           </tr>
                         ) : (
-                          releaseRows.map((row) => {
+                          filteredReleaseRows.map((row) => {
                             const isActivating = activatingReleaseId === row.rawId;
                             const isDeleting = deletingReleaseId === row.rawId;
                             return (
@@ -1922,21 +2096,25 @@ export default function App() {
                                 <td>{row.versionName}</td>
                                 <td className="mono">{row.versionCode}</td>
                                 <td>
-                                  {row.apkUrl && row.apkUrl !== "-" ? (
-                                    <a className="ghost-btn" href={row.apkUrl} target="_blank" rel="noreferrer">
-                                      Abrir
-                                    </a>
-                                  ) : (
-                                    "-"
-                                  )}
+                                  <div className="cell-center cell-center-right">
+                                    {row.apkUrl && row.apkUrl !== "-" ? (
+                                      <a className="ghost-btn" href={row.apkUrl} target="_blank" rel="noreferrer">
+                                        Abrir
+                                      </a>
+                                    ) : (
+                                      "-"
+                                    )}
+                                  </div>
                                 </td>
                                 <td>{row.message || "-"}</td>
                                 <td>
-                                  <span className={row.isActive ? "badge badge-green" : "badge badge-yellow"}>
-                                    {row.status}
-                                  </span>
+                                  <div className="cell-center cell-center-right">
+                                    <span className={row.isActive ? "badge badge-green" : "badge badge-yellow"}>
+                                      {row.status}
+                                    </span>
+                                  </div>
                                 </td>
-                                <td>{formatDateTime(row.createdAt)}</td>
+                                <td>{formatDateTimeSeconds(row.createdAt)}</td>
                                 <td className="releases-actions">
                                   <button
                                     type="button"
@@ -1963,6 +2141,150 @@ export default function App() {
                     </table>
                   </div>
                 </div>
+
+                {releaseInfoModalOpen && (
+                  <div
+                    className="modal-backdrop"
+                    role="dialog"
+                    aria-modal="true"
+                    onClick={() => setReleaseInfoModalOpen(false)}
+                  >
+                    <div className="modal" onClick={(event) => event.stopPropagation()}>
+                      <div className="modal-header" style={{ justifyContent: "center", textAlign: "center" }}>
+                        <div style={{ width: "100%" }}>
+                          <p className="muted" style={{ margin: 0 }}>
+                            Actualizacion activa actual
+                          </p>
+                          <h3 style={{ margin: "6px 0 0" }}>{activeRelease?.versionName || "-"}</h3>
+                        </div>
+                      </div>
+
+                      <div className="modal-body">
+                        {!activeRelease ? (
+                          <p className="muted">No hay release activa</p>
+                        ) : (
+                          <>
+                            <div className="detail-grid" style={{ marginTop: 0 }}>
+                              <div className="detail-box">
+                                <span>Version codigo</span>
+                                <div className="mono">{activeRelease.versionCode ?? "-"}</div>
+                              </div>
+                              <div className="detail-box">
+                                <span>Creado</span>
+                                <div>{formatDateTimeSeconds(activeRelease.createdAt)}</div>
+                              </div>
+                              <div className="detail-box" style={{ gridColumn: "1 / -1" }}>
+                                <span>Link</span>
+                                <div className="mono">{activeRelease.apkUrl || "-"}</div>
+                              </div>
+                            </div>
+
+                            <div className="detail-section">
+                              <div className="detail-label">Mensaje</div>
+                              <div className="detail-content">{activeRelease.message || "-"}</div>
+                            </div>
+                          </>
+                        )}
+                      </div>
+
+                      <div className="modal-actions">
+                        {activeRelease?.apkUrl && activeRelease.apkUrl !== "-" && (
+                          <a className="ghost-btn" href={activeRelease.apkUrl} target="_blank" rel="noreferrer">
+                            Abrir
+                          </a>
+                        )}
+                        <button type="button" className="secondary-btn" onClick={() => setReleaseInfoModalOpen(false)}>
+                          Cerrar
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {createReleaseModalOpen && (
+                  <div
+                    className="modal-backdrop"
+                    role="dialog"
+                    aria-modal="true"
+                    onClick={() => setCreateReleaseModalOpen(false)}
+                  >
+                    <div className="modal" onClick={(event) => event.stopPropagation()}>
+                      <div className="modal-header" style={{ justifyContent: "center", textAlign: "center" }}>
+                        <div style={{ width: "100%" }}>
+                          <h3>Nueva actualizacion</h3>
+                          <p className="muted" style={{ margin: "6px 0 0" }}>
+                            Crear y dejar activa
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="modal-body">
+                        <div className="release-form-grid" style={{ marginTop: 0 }}>
+                          <div>
+                            <p className="muted">version actualizacion</p>
+                            <input
+                              type="text"
+                              value={releaseNameValue}
+                              onChange={(e) => setReleaseNameValue(e.target.value)}
+                              className="demo-input"
+                              placeholder="Ej: 1.0.9"
+                            />
+                          </div>
+                          <div>
+                            <p className="muted">version codigo</p>
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              value={releaseCodeValue}
+                              onChange={(e) => setReleaseCodeValue(e.target.value)}
+                              className="demo-input"
+                              placeholder="Ej: 109"
+                            />
+                          </div>
+                          <div className="release-form-full">
+                            <p className="muted">link</p>
+                            <input
+                              type="text"
+                              value={releaseApkUrlValue}
+                              onChange={(e) => setReleaseApkUrlValue(e.target.value)}
+                              className="demo-input"
+                              placeholder="https://..."
+                            />
+                          </div>
+                          <div className="release-form-full">
+                            <p className="muted">Mensaje</p>
+                            <textarea
+                              rows={3}
+                              value={releaseMessageValue}
+                              onChange={(e) => setReleaseMessageValue(e.target.value)}
+                              className="demo-input"
+                              placeholder="Qué cambia y por qué es obligatoria"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="modal-actions">
+                        <button
+                          type="button"
+                          className="secondary-btn"
+                          disabled={creatingRelease || loadingReleases || activatingReleaseId !== "" || deletingReleaseId !== ""}
+                          onClick={() => setCreateReleaseModalOpen(false)}
+                        >
+                          Cancelar
+                        </button>
+                        <button
+                          type="button"
+                          className="primary-btn"
+                          disabled={creatingRelease || loadingReleases || activatingReleaseId !== "" || deletingReleaseId !== ""}
+                          onClick={handleCreateRelease}
+                        >
+                          {creatingRelease ? "Creando..." : "Crear y activar"}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </>
             )}
           </>
