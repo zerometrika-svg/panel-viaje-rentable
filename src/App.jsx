@@ -14,9 +14,19 @@ import {
   Bot,
   Eye,
   HelpCircle,
-  Plus
+  Plus,
+  Stethoscope,
+  Trash2,
+  ClipboardCopy,
+  CheckCircle2
 } from "lucide-react";
 import "./App.css";
+import {
+  deleteOfferFailureDiagnostic,
+  deleteReviewedOfferFailureDiagnostics,
+  getOfferFailureDiagnostics,
+  reviewOfferFailureDiagnostic,
+} from "./api/offerFailureDiagnostics";
 
 const API_BASE_URL = "https://viaje-rentable-api.onrender.com";
 
@@ -83,6 +93,62 @@ function formatDateTimeSeconds(value) {
   )}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
+function formatDateTimeShort(value) {
+  const date = value instanceof Date ? value : parseDate(value);
+  if (!date) return "-";
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${pad(date.getDate())}/${pad(date.getMonth() + 1)} ${pad(date.getHours())}:${pad(
+    date.getMinutes()
+  )}`;
+}
+
+function formatMinKm({ minutes, km } = {}) {
+  const hasMinutes = Number.isFinite(minutes);
+  const hasKm = Number.isFinite(km);
+  if (!hasMinutes && !hasKm) return "-";
+  const minutesLabel = hasMinutes ? `${Math.round(minutes)}m` : "-";
+  const kmLabel = hasKm ? `${Math.round(km * 10) / 10}km` : "-";
+  return `${minutesLabel}/${kmLabel}`;
+}
+
+function toFiniteNumber(value) {
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function parseMaybeJson(value) {
+  if (typeof value !== "string") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
+function getOfferFailureCleanTexts(raw) {
+  const candidate =
+    raw?.clean_texts_json ??
+    raw?.cleanTextsJson ??
+    raw?.clean_texts ??
+    raw?.cleanTexts ??
+    raw?.clean_texts_json_string ??
+    raw?.clean_texts_json_raw ??
+    null;
+
+  const parsed = parseMaybeJson(candidate);
+  if (Array.isArray(parsed)) return parsed.map((t) => String(t)).filter(Boolean);
+
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    const texts = parsed.texts ?? parsed.items ?? parsed.lines ?? null;
+    if (Array.isArray(texts)) return texts.map((t) => String(t)).filter(Boolean);
+  }
+
+  const fallback = raw?.clean_texts_json?.texts;
+  if (Array.isArray(fallback)) return fallback.map((t) => String(t)).filter(Boolean);
+
+  return [];
+}
+
 function formatDuration(ms) {
   const safeMs = Math.max(0, ms);
   const totalMinutes = Math.floor(safeMs / 60000);
@@ -131,7 +197,15 @@ export default function App() {
   const [tab, setTab] = useState(() => {
     try {
       const saved = window.localStorage.getItem("vr_admin_tab");
-      const validTabs = new Set(["inicio", "errores", "licencias", "dispositivos", "demos", "versiones"]);
+      const validTabs = new Set([
+        "inicio",
+        "errores",
+        "licencias",
+        "dispositivos",
+        "demos",
+        "versiones",
+        "diagnosticos_uber",
+      ]);
       return validTabs.has(saved) ? saved : "inicio";
     } catch {
       return "inicio";
@@ -198,6 +272,26 @@ export default function App() {
   const [releaseInfoModalOpen, setReleaseInfoModalOpen] = useState(false);
   const [createReleaseModalOpen, setCreateReleaseModalOpen] = useState(false);
 
+  const [offerFailureDiagnostics, setOfferFailureDiagnostics] = useState([]);
+  const [loadingOfferFailureDiagnostics, setLoadingOfferFailureDiagnostics] = useState(false);
+  const [offerFailureDiagnosticsError, setOfferFailureDiagnosticsError] = useState("");
+  const [offerFailureActionError, setOfferFailureActionError] = useState("");
+  const [offerFailureModalId, setOfferFailureModalId] = useState("");
+  const [reviewingOfferFailureId, setReviewingOfferFailureId] = useState("");
+  const [deletingOfferFailureId, setDeletingOfferFailureId] = useState("");
+  const [deletingReviewedOfferFailures, setDeletingReviewedOfferFailures] = useState(false);
+  const [offerFailureNote, setOfferFailureNote] = useState("");
+  const [copiedOfferFailureDiagnostic, setCopiedOfferFailureDiagnostic] = useState(false);
+  const [copiedOfferFailureTexts, setCopiedOfferFailureTexts] = useState(false);
+  const copiedOfferFailureDiagnosticTimeoutRef = useRef(0);
+  const copiedOfferFailureTextsTimeoutRef = useRef(0);
+
+  const [offerFailureFilterStatus, setOfferFailureFilterStatus] = useState("all");
+  const [offerFailureFilterReason, setOfferFailureFilterReason] = useState("all");
+  const [offerFailureFilterAppVersion, setOfferFailureFilterAppVersion] = useState("all");
+  const [offerFailureFilterDeviceHash, setOfferFailureFilterDeviceHash] = useState("");
+  const [offerFailureFilterModel, setOfferFailureFilterModel] = useState("");
+
   useEffect(() => {
     try {
       window.localStorage.setItem("vr_admin_tab", tab);
@@ -236,6 +330,30 @@ export default function App() {
       }
     } finally {
       setLoadingErrors(false);
+    }
+  };
+
+  const fetchOfferFailureDiagnostics = async ({ signal } = {}) => {
+    setLoadingOfferFailureDiagnostics(true);
+    setOfferFailureDiagnosticsError("");
+    try {
+      const result = await getOfferFailureDiagnostics({ baseUrl: API_BASE_URL, signal });
+      if (!result.ok) {
+        setOfferFailureDiagnostics([]);
+        setOfferFailureDiagnosticsError(`Error al cargar diagnósticos (${result.status})`);
+        return;
+      }
+      setOfferFailureDiagnostics(Array.isArray(result.items) ? result.items : []);
+      if (!Array.isArray(result.items)) {
+        setOfferFailureDiagnosticsError("Error al cargar diagnósticos");
+      }
+    } catch (err) {
+      if (err?.name !== "AbortError") {
+        setOfferFailureDiagnostics([]);
+        setOfferFailureDiagnosticsError("Error al cargar diagnósticos");
+      }
+    } finally {
+      setLoadingOfferFailureDiagnostics(false);
     }
   };
 
@@ -650,6 +768,140 @@ export default function App() {
     }
   };
 
+  const handleCopyOfferFailureDiagnostic = async (value) => {
+    const text = value === null || value === undefined ? "" : String(value);
+    if (!text) return;
+
+    try {
+      if (navigator?.clipboard?.writeText && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const el = document.createElement("textarea");
+        el.value = text;
+        el.setAttribute("readonly", "");
+        el.style.position = "absolute";
+        el.style.left = "-9999px";
+        document.body.appendChild(el);
+        el.select();
+        document.execCommand("copy");
+        document.body.removeChild(el);
+      }
+
+      setCopiedOfferFailureDiagnostic(true);
+      window.clearTimeout(copiedOfferFailureDiagnosticTimeoutRef.current);
+      copiedOfferFailureDiagnosticTimeoutRef.current = window.setTimeout(
+        () => setCopiedOfferFailureDiagnostic(false),
+        1200
+      );
+    } catch {
+      setCopiedOfferFailureDiagnostic(false);
+    }
+  };
+
+  const handleCopyOfferFailureTexts = async (value) => {
+    const text = value === null || value === undefined ? "" : String(value);
+    if (!text) return;
+
+    try {
+      if (navigator?.clipboard?.writeText && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const el = document.createElement("textarea");
+        el.value = text;
+        el.setAttribute("readonly", "");
+        el.style.position = "absolute";
+        el.style.left = "-9999px";
+        document.body.appendChild(el);
+        el.select();
+        document.execCommand("copy");
+        document.body.removeChild(el);
+      }
+
+      setCopiedOfferFailureTexts(true);
+      window.clearTimeout(copiedOfferFailureTextsTimeoutRef.current);
+      copiedOfferFailureTextsTimeoutRef.current = window.setTimeout(
+        () => setCopiedOfferFailureTexts(false),
+        1200
+      );
+    } catch {
+      setCopiedOfferFailureTexts(false);
+    }
+  };
+
+  const handleReviewOfferFailure = async ({ id, note } = {}) => {
+    if (id === null || id === undefined || id === "") {
+      setOfferFailureActionError("No se pudo ejecutar la acción (id inválido)");
+      return;
+    }
+
+    const normalizedId = String(id);
+    setReviewingOfferFailureId(normalizedId);
+    setOfferFailureActionError("");
+    try {
+      const result = await reviewOfferFailureDiagnostic({
+        baseUrl: API_BASE_URL,
+        id: normalizedId,
+        note: note ? String(note) : "",
+      });
+      if (!result.ok) {
+        setOfferFailureActionError(`Error al marcar revisado (${result.status})`);
+        return;
+      }
+      await fetchOfferFailureDiagnostics();
+    } catch {
+      setOfferFailureActionError("Error al marcar revisado");
+    } finally {
+      setReviewingOfferFailureId("");
+    }
+  };
+
+  const handleDeleteOfferFailure = async (id) => {
+    if (id === null || id === undefined || id === "") {
+      setOfferFailureActionError("No se pudo ejecutar la acción (id inválido)");
+      return;
+    }
+
+    const ok = window.confirm("¿Eliminar este diagnóstico? Esta acción no se puede deshacer.");
+    if (!ok) return;
+
+    const normalizedId = String(id);
+    setDeletingOfferFailureId(normalizedId);
+    setOfferFailureActionError("");
+    try {
+      const result = await deleteOfferFailureDiagnostic({ baseUrl: API_BASE_URL, id: normalizedId });
+      if (!result.ok) {
+        setOfferFailureActionError(`Error al eliminar (${result.status})`);
+        return;
+      }
+      if (offerFailureModalId === normalizedId) setOfferFailureModalId("");
+      await fetchOfferFailureDiagnostics();
+    } catch {
+      setOfferFailureActionError("Error al eliminar");
+    } finally {
+      setDeletingOfferFailureId("");
+    }
+  };
+
+  const handleDeleteReviewedOfferFailures = async () => {
+    const ok = window.confirm("¿Borrar TODOS los diagnósticos revisados? Esta acción no se puede deshacer.");
+    if (!ok) return;
+
+    setDeletingReviewedOfferFailures(true);
+    setOfferFailureActionError("");
+    try {
+      const result = await deleteReviewedOfferFailureDiagnostics({ baseUrl: API_BASE_URL });
+      if (!result.ok) {
+        setOfferFailureActionError(`Error al borrar revisados (${result.status})`);
+        return;
+      }
+      await fetchOfferFailureDiagnostics();
+    } catch {
+      setOfferFailureActionError("Error al borrar revisados");
+    } finally {
+      setDeletingReviewedOfferFailures(false);
+    }
+  };
+
   useEffect(() => {
     const controller = new AbortController();
     fetchErrors({ signal: controller.signal });
@@ -657,6 +909,7 @@ export default function App() {
     fetchDevices({ signal: controller.signal });
     fetchDemos({ signal: controller.signal });
     fetchReleases({ signal: controller.signal });
+    fetchOfferFailureDiagnostics({ signal: controller.signal });
     return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -812,6 +1065,15 @@ export default function App() {
   }, [releaseInfoModalOpen, createReleaseModalOpen]);
 
   useEffect(() => {
+    if (!offerFailureModalId) return;
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") setOfferFailureModalId("");
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [offerFailureModalId]);
+
+  useEffect(() => {
     if (!errorModalId) return;
     setErrorDescriptionHidden(true);
   }, [errorModalId]);
@@ -856,6 +1118,196 @@ export default function App() {
       topTypes,
     };
   }, [errorRows]);
+
+  const offerFailureRows = useMemo(() => {
+    return offerFailureDiagnostics.map((item) => {
+      const rawId =
+        item?.id !== null && item?.id !== undefined
+          ? String(item.id)
+          : item?._id !== null && item?._id !== undefined
+            ? String(item._id)
+            : item?.diagnostic_id !== null && item?.diagnostic_id !== undefined
+              ? String(item.diagnostic_id)
+              : "";
+
+      const createdAtRaw = item?.created_at || item?.createdAt || item?.timestamp || "-";
+      const createdAt = formatDateTimeShort(createdAtRaw);
+      const createdAtFull = formatDateTimeSeconds(createdAtRaw);
+
+      const reason =
+        item?.reason ||
+        item?.motivo ||
+        item?.failure_reason ||
+        item?.error_reason ||
+        item?.type ||
+        item?.event_type ||
+        "-";
+
+      const deviceHash = item?.device_hash || item?.deviceHash || item?.device_id_hash || "-";
+      const deviceHashShort =
+        deviceHash && deviceHash !== "-" ? String(deviceHash).slice(0, 8) : "-";
+
+      const model = item?.model || item?.device_model || item?.device_name || "-";
+      const android = item?.android || item?.android_version || item?.androidVersion || "-";
+      const appVersion = item?.app_version || item?.appVersion || "-";
+      const uberVersion = item?.uber_version || item?.uberVersion || "-";
+
+      const statusRaw = item?.status || "-";
+      const status =
+        statusRaw === "pending"
+          ? "Pendiente"
+          : statusRaw === "reviewed"
+            ? "Revisado"
+            : statusRaw === "resolved"
+              ? "Resuelto"
+              : statusRaw || "-";
+
+      const price =
+        item?.price ??
+        item?.detected_price ??
+        item?.fare ??
+        item?.detectedPrice ??
+        item?.offer_price ??
+        "-";
+
+      const pickupMinutes = toFiniteNumber(item?.pickup_minutes ?? item?.pickup_min ?? item?.pickupMin);
+      const pickupKm = toFiniteNumber(item?.pickup_km ?? item?.pickupKm);
+      const tripMinutes = toFiniteNumber(item?.trip_minutes ?? item?.trip_min ?? item?.tripMin);
+      const tripKm = toFiniteNumber(item?.trip_km ?? item?.tripKm);
+
+      const pickup = formatMinKm({ minutes: pickupMinutes, km: pickupKm });
+      const trip = formatMinKm({ minutes: tripMinutes, km: tripKm });
+
+      return {
+        rawId,
+        createdAtRaw,
+        createdAt,
+        createdAtFull,
+        reason: reason || "-",
+        deviceHash: deviceHash || "-",
+        deviceHashShort,
+        model: model || "-",
+        android: android || "-",
+        appVersion: appVersion || "-",
+        uberVersion: uberVersion || "-",
+        price: price === null || price === undefined || price === "" ? "-" : String(price),
+        pickup,
+        trip,
+        status,
+        statusRaw: statusRaw || "-",
+        raw: item,
+      };
+    });
+  }, [offerFailureDiagnostics]);
+
+  const offerFailureReasonOptions = useMemo(() => {
+    const unique = new Set();
+    for (const row of offerFailureRows) {
+      if (row?.reason && row.reason !== "-") unique.add(row.reason);
+    }
+    return Array.from(unique).sort((a, b) => a.localeCompare(b));
+  }, [offerFailureRows]);
+
+  const offerFailureAppVersionOptions = useMemo(() => {
+    const unique = new Set();
+    for (const row of offerFailureRows) {
+      if (row?.appVersion && row.appVersion !== "-") unique.add(row.appVersion);
+    }
+    return Array.from(unique).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  }, [offerFailureRows]);
+
+  useEffect(() => {
+    if (offerFailureFilterReason === "all") return;
+    if (offerFailureReasonOptions.includes(offerFailureFilterReason)) return;
+    setOfferFailureFilterReason("all");
+  }, [offerFailureReasonOptions, offerFailureFilterReason]);
+
+  useEffect(() => {
+    if (offerFailureFilterAppVersion === "all") return;
+    if (offerFailureAppVersionOptions.includes(offerFailureFilterAppVersion)) return;
+    setOfferFailureFilterAppVersion("all");
+  }, [offerFailureAppVersionOptions, offerFailureFilterAppVersion]);
+
+  const filteredOfferFailures = useMemo(() => {
+    const deviceHashQ = offerFailureFilterDeviceHash.trim().toLowerCase();
+    const modelQ = offerFailureFilterModel.trim().toLowerCase();
+    return offerFailureRows.filter((row) => {
+      const matchStatus =
+        offerFailureFilterStatus === "all" ||
+        (offerFailureFilterStatus === "pending" && row.status === "Pendiente") ||
+        (offerFailureFilterStatus === "reviewed" && row.status === "Revisado");
+
+      const matchReason = offerFailureFilterReason === "all" || row.reason === offerFailureFilterReason;
+      const matchAppVersion =
+        offerFailureFilterAppVersion === "all" || row.appVersion === offerFailureFilterAppVersion;
+
+      const matchHash =
+        deviceHashQ === "" || String(row.deviceHash || "").toLowerCase().includes(deviceHashQ);
+
+      const matchModel = modelQ === "" || String(row.model || "").toLowerCase().includes(modelQ);
+
+      return matchStatus && matchReason && matchAppVersion && matchHash && matchModel;
+    });
+  }, [
+    offerFailureRows,
+    offerFailureFilterStatus,
+    offerFailureFilterReason,
+    offerFailureFilterAppVersion,
+    offerFailureFilterDeviceHash,
+    offerFailureFilterModel,
+  ]);
+
+  const offerFailureStats = useMemo(() => {
+    const total = offerFailureRows.length;
+    const pending = offerFailureRows.filter((r) => r.status === "Pendiente").length;
+    const reviewed = offerFailureRows.filter((r) => r.status === "Revisado").length;
+
+    const baseRows = offerFailureRows.filter((r) => r.status === "Pendiente");
+    const rowsForRanking = baseRows.length > 0 ? baseRows : offerFailureRows;
+
+    const reasonCounts = new Map();
+    const appVersionCounts = new Map();
+
+    for (const r of rowsForRanking) {
+      if (r?.reason && r.reason !== "-") {
+        reasonCounts.set(r.reason, (reasonCounts.get(r.reason) || 0) + 1);
+      }
+      if (r?.appVersion && r.appVersion !== "-") {
+        appVersionCounts.set(r.appVersion, (appVersionCounts.get(r.appVersion) || 0) + 1);
+      }
+    }
+
+    const mostCommonReason =
+      Array.from(reasonCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] || "-";
+
+    const mostProblematicAppVersion =
+      Array.from(appVersionCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] || "-";
+
+    return {
+      total,
+      pending,
+      reviewed,
+      mostCommonReason,
+      mostProblematicAppVersion,
+    };
+  }, [offerFailureRows]);
+
+  const offerFailureModalItem = useMemo(() => {
+    if (!offerFailureModalId) return null;
+    return offerFailureRows.find((row) => row.rawId === offerFailureModalId) || null;
+  }, [offerFailureRows, offerFailureModalId]);
+
+  useEffect(() => {
+    if (!offerFailureModalId) return;
+    const exists = offerFailureRows.some((row) => row.rawId === offerFailureModalId);
+    if (!exists) setOfferFailureModalId("");
+  }, [offerFailureRows, offerFailureModalId]);
+
+  useEffect(() => {
+    if (!offerFailureModalId) return;
+    setOfferFailureActionError("");
+    setOfferFailureNote("");
+  }, [offerFailureModalId]);
 
   const licenseRows = useMemo(() => {
     return licenses.map((item) => {
@@ -1358,6 +1810,13 @@ export default function App() {
             <span className="nav-label">Errores</span>
           </button>
           <button
+            className={tab === "diagnosticos_uber" ? "nav-item active" : "nav-item"}
+            onClick={() => setTab("diagnosticos_uber")}
+          >
+            <Stethoscope size={16} />
+            <span className="nav-label">Diagnósticos Uber</span>
+          </button>
+          <button
             className={tab === "versiones" ? "nav-item active" : "nav-item"}
             onClick={() => setTab("versiones")}
           >
@@ -1373,7 +1832,7 @@ export default function App() {
             <h1 className="main-title">Viaje Rentable Admin</h1>
           </div>
 
-          {tab !== "errores" && tab !== "inicio" && (
+          {tab !== "errores" && tab !== "inicio" && tab !== "diagnosticos_uber" && (
             <div className="search-box">
               <Search size={16} />
               <input
@@ -1768,6 +2227,686 @@ export default function App() {
                 </div>
               </div>
             )}
+            </div>
+          </>
+        )}
+
+        {tab === "diagnosticos_uber" && (
+          <>
+            <style>{`
+              .diagnostics-compact .card { padding: 14px; }
+              .diagnostics-compact .section-title { margin-bottom: 10px; }
+              .diagnostics-compact .section-title h2 { font-size: 18px; }
+              .diagnostics-compact .section-title p { margin-top: 4px; font-size: 12px; }
+              .diagnostics-compact table { font-size: 12.25px; }
+              .diagnostics-compact th, .diagnostics-compact td { padding: 7px 8px; }
+              .diagnostics-compact select, .diagnostics-compact input {
+                padding: 8px 10px;
+                border-radius: 12px;
+                border: 1px solid var(--border);
+                font-size: 13px;
+                background: var(--card);
+                color: var(--text);
+                outline: none;
+              }
+              .diagnostics-compact .primary-btn,
+              .diagnostics-compact .secondary-btn,
+              .diagnostics-compact .ghost-btn {
+                padding: 8px 12px;
+                border-radius: 12px;
+                font-size: 13px;
+              }
+              .diagnostics-compact .danger-btn {
+                background: var(--danger);
+                color: #fff;
+                border: 1px solid var(--danger);
+              }
+              .diagnostics-compact .danger-btn:hover {
+                background: var(--danger-hover);
+                border-color: var(--danger-hover);
+              }
+              .diagnostics-compact .danger-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+              .diagnostics-compact .diagnostics-metrics-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+                gap: 10px;
+                margin-bottom: 12px;
+              }
+              .diagnostics-compact .metric-card { padding: 12px; border-radius: 16px; }
+              .diagnostics-compact .metric-card h3 { font-size: 18px; margin: 6px 0 0; }
+              .diagnostics-compact .metric-card .hint { margin-top: 6px; font-size: 11.5px; }
+              .diagnostics-compact .metric-card .icon-box { padding: 10px; border-radius: 14px; }
+              .diagnostics-compact .diagnostics-toolbar {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 10px;
+                align-items: flex-end;
+                justify-content: space-between;
+                margin-bottom: 10px;
+              }
+              .diagnostics-compact .diagnostics-filters {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+                gap: 10px;
+                flex: 1;
+                min-width: 260px;
+              }
+              .diagnostics-compact .filter-field { display: grid; gap: 6px; }
+              .diagnostics-compact .filter-field .muted { font-size: 11.5px; }
+              .diagnostics-compact .diagnostics-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+              .diagnostics-compact .chip {
+                display: inline-flex;
+                align-items: center;
+                padding: 4px 8px;
+                border-radius: 999px;
+                font-size: 11px;
+                border: 1px solid rgba(148, 163, 184, 0.18);
+                background: rgba(2, 6, 23, 0.22);
+                color: rgba(226, 232, 240, 0.92);
+              }
+              .diagnostics-compact .diagnostics-row { cursor: pointer; }
+              .diagnostics-compact .truncate-cell {
+                display: inline-block;
+                max-width: 180px;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+                vertical-align: bottom;
+              }
+              .diagnostics-compact .note-input {
+                width: 100%;
+                resize: vertical;
+                min-height: 90px;
+                padding: 10px;
+                border-radius: 14px;
+                border: 1px solid rgba(148, 163, 184, 0.14);
+                background: rgba(2, 6, 23, 0.18);
+                color: var(--text);
+                font-family: var(--sans);
+                font-size: 12.5px;
+                line-height: 1.3;
+              }
+              .diagnostics-compact .texts-list { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
+              .diagnostics-compact .texts-list li {
+                font-size: 12.25px;
+                line-height: 1.25;
+                word-break: break-word;
+              }
+              .diagnostics-compact .actions-inline {
+                display: inline-flex;
+                gap: 8px;
+                align-items: center;
+                flex-wrap: wrap;
+              }
+            `}</style>
+
+            <div className="diagnostics-compact">
+              <SectionTitle
+                title="Diagnósticos Uber"
+                subtitle="Fallos reales de detección de ofertas para revisar rápido y encontrar patrones."
+              />
+
+              <div className="diagnostics-metrics-grid">
+                <MetricCard
+                  title="Pendientes"
+                  value={String(offerFailureStats.pending)}
+                  hint="Para revisar"
+                  icon={AlertTriangle}
+                />
+                <MetricCard
+                  title="Revisados"
+                  value={String(offerFailureStats.reviewed)}
+                  hint="Ya clasificados"
+                  icon={CheckCircle2}
+                />
+                <MetricCard
+                  title="Motivo más común"
+                  value={offerFailureStats.mostCommonReason}
+                  hint="Ranking prioriza pendientes"
+                  icon={HelpCircle}
+                />
+                <MetricCard
+                  title="App más problemática"
+                  value={offerFailureStats.mostProblematicAppVersion}
+                  hint="Ranking prioriza pendientes"
+                  icon={Bot}
+                />
+              </div>
+
+              <div className="card">
+                <div className="diagnostics-toolbar">
+                  <div className="diagnostics-filters">
+                    <label className="filter-field">
+                      <span className="muted">Estado</span>
+                      <select
+                        value={offerFailureFilterStatus}
+                        onChange={(e) => setOfferFailureFilterStatus(e.target.value)}
+                      >
+                        <option value="all">Todos</option>
+                        <option value="pending">Pendientes</option>
+                        <option value="reviewed">Revisados</option>
+                      </select>
+                    </label>
+
+                    <label className="filter-field">
+                      <span className="muted">Motivo</span>
+                      <select
+                        value={offerFailureFilterReason}
+                        onChange={(e) => setOfferFailureFilterReason(e.target.value)}
+                      >
+                        <option value="all">Todos</option>
+                        {offerFailureReasonOptions.map((reason) => (
+                          <option key={reason} value={reason}>
+                            {reason}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="filter-field">
+                      <span className="muted">App versión</span>
+                      <select
+                        value={offerFailureFilterAppVersion}
+                        onChange={(e) => setOfferFailureFilterAppVersion(e.target.value)}
+                      >
+                        <option value="all">Todas</option>
+                        {offerFailureAppVersionOptions.map((version) => (
+                          <option key={version} value={version}>
+                            {version}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="filter-field">
+                      <span className="muted">Device hash</span>
+                      <input
+                        value={offerFailureFilterDeviceHash}
+                        onChange={(e) => setOfferFailureFilterDeviceHash(e.target.value)}
+                        placeholder="buscar…"
+                      />
+                    </label>
+
+                    <label className="filter-field">
+                      <span className="muted">Modelo</span>
+                      <input
+                        value={offerFailureFilterModel}
+                        onChange={(e) => setOfferFailureFilterModel(e.target.value)}
+                        placeholder="buscar…"
+                      />
+                    </label>
+                  </div>
+
+                  <div className="diagnostics-actions">
+                    <button
+                      type="button"
+                      className="ghost-btn"
+                      disabled={loadingOfferFailureDiagnostics}
+                      onClick={() => {
+                        setOfferFailureFilterStatus("all");
+                        setOfferFailureFilterReason("all");
+                        setOfferFailureFilterAppVersion("all");
+                        setOfferFailureFilterDeviceHash("");
+                        setOfferFailureFilterModel("");
+                      }}
+                    >
+                      Limpiar filtros
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-btn"
+                      disabled={loadingOfferFailureDiagnostics}
+                      onClick={() => fetchOfferFailureDiagnostics()}
+                    >
+                      Recargar
+                    </button>
+                    <button
+                      type="button"
+                      className="primary-btn danger-btn"
+                      disabled={
+                        deletingReviewedOfferFailures ||
+                        loadingOfferFailureDiagnostics ||
+                        offerFailureStats.reviewed === 0
+                      }
+                      onClick={handleDeleteReviewedOfferFailures}
+                    >
+                      {deletingReviewedOfferFailures
+                        ? "Borrando revisados..."
+                        : `Borrar revisados (${offerFailureStats.reviewed})`}
+                    </button>
+                  </div>
+                </div>
+
+                {!!offerFailureActionError && <p className="muted">{offerFailureActionError}</p>}
+
+                {loadingOfferFailureDiagnostics ? (
+                  <p className="muted">Cargando diagnósticos...</p>
+                ) : offerFailureDiagnosticsError ? (
+                  <p className="muted">{offerFailureDiagnosticsError}</p>
+                ) : filteredOfferFailures.length === 0 ? (
+                  <p className="muted">
+                    {offerFailureRows.length === 0
+                      ? "No hay diagnósticos"
+                      : "Sin resultados con esos filtros"}
+                  </p>
+                ) : (
+                  <div className="table-wrap">
+                    <table className="diagnostics-table">
+                      <thead>
+                        <tr>
+                          <th>Fecha</th>
+                          <th>Motivo</th>
+                          <th>Hash</th>
+                          <th>Modelo</th>
+                          <th>Android</th>
+                          <th>App</th>
+                          <th>Uber</th>
+                          <th>Precio</th>
+                          <th>Pickup</th>
+                          <th>Viaje</th>
+                          <th>Estado</th>
+                          <th>Acciones</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredOfferFailures.map((row, index) => {
+                          const idKey = row.rawId
+                            ? row.rawId
+                            : `${row.deviceHash}-${row.createdAtRaw}-${index}`;
+                          const canAct = !!row.rawId && row.rawId !== "-";
+
+                          return (
+                            <tr
+                              key={idKey}
+                              className="diagnostics-row"
+                              onClick={() => {
+                                if (!canAct) return;
+                                setOfferFailureModalId(row.rawId);
+                              }}
+                            >
+                              <td className="mono">{row.createdAt}</td>
+                              <td>
+                                <span className="chip" title={row.reason}>
+                                  {row.reason}
+                                </span>
+                              </td>
+                              <td className="mono">{row.deviceHashShort}</td>
+                              <td>
+                                <span className="truncate-cell" title={row.model}>
+                                  {row.model}
+                                </span>
+                              </td>
+                              <td className="mono">{row.android}</td>
+                              <td className="mono">{row.appVersion}</td>
+                              <td className="mono">{row.uberVersion}</td>
+                              <td className="mono">{row.price}</td>
+                              <td className="mono">{row.pickup}</td>
+                              <td className="mono">{row.trip}</td>
+                              <td>
+                                <span className={getBadgeClass(row.status)}>{row.status}</span>
+                              </td>
+                              <td>
+                                <div className="row-actions">
+                                  <button
+                                    type="button"
+                                    className="ghost-btn icon-btn"
+                                    title="Ver detalle"
+                                    disabled={!canAct}
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      if (!canAct) return;
+                                      setOfferFailureModalId(row.rawId);
+                                    }}
+                                  >
+                                    <Eye size={14} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="ghost-btn icon-btn"
+                                    title="Marcar revisado"
+                                    disabled={
+                                      !canAct ||
+                                      row.status === "Revisado" ||
+                                      reviewingOfferFailureId === row.rawId ||
+                                      loadingOfferFailureDiagnostics
+                                    }
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      if (!canAct) return;
+                                      handleReviewOfferFailure({ id: row.rawId, note: "" });
+                                    }}
+                                  >
+                                    <CheckCircle2 size={14} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="ghost-btn icon-btn danger-btn"
+                                    title="Eliminar"
+                                    disabled={
+                                      !canAct ||
+                                      deletingOfferFailureId === row.rawId ||
+                                      loadingOfferFailureDiagnostics
+                                    }
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      if (!canAct) return;
+                                      handleDeleteOfferFailure(row.rawId);
+                                    }}
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {offerFailureModalId && offerFailureModalItem && (
+                <div
+                  className="modal-backdrop"
+                  role="dialog"
+                  aria-modal="true"
+                  onClick={() => setOfferFailureModalId("")}
+                >
+                  <div className="modal" onClick={(event) => event.stopPropagation()}>
+                    <div className="modal-header">
+                      <div>
+                        <h3>Diagnóstico Uber</h3>
+                      </div>
+                      <span className={getBadgeClass(offerFailureModalItem.status)}>
+                        {offerFailureModalItem.status}
+                      </span>
+                    </div>
+
+                    <div className="modal-body">
+                      {(() => {
+                        const raw = offerFailureModalItem.raw || {};
+                        const cleanTexts = getOfferFailureCleanTexts(raw);
+
+                        const resolution =
+                          raw?.resolution ?? raw?.screen_resolution ?? raw?.res ?? "-";
+                        const density = raw?.density ?? raw?.dpi ?? "-";
+                        const locale = raw?.locale ?? raw?.lang ?? "-";
+                        const eventType =
+                          raw?.event_type ?? raw?.eventType ?? raw?.event ?? raw?.type ?? "-";
+                        const className = raw?.class_name ?? raw?.className ?? "-";
+                        const detectedPrice =
+                          raw?.detected_price ?? raw?.detectedPrice ?? raw?.price ?? raw?.fare ?? "-";
+
+                        const pickupMinutes = toFiniteNumber(
+                          raw?.pickup_minutes ?? raw?.pickup_min ?? raw?.pickupMin
+                        );
+                        const pickupKm = toFiniteNumber(raw?.pickup_km ?? raw?.pickupKm);
+                        const tripMinutes = toFiniteNumber(
+                          raw?.trip_minutes ?? raw?.trip_min ?? raw?.tripMin
+                        );
+                        const tripKm = toFiniteNumber(raw?.trip_km ?? raw?.tripKm);
+
+                        const rawTextCount =
+                          raw?.raw_text_count ??
+                          raw?.rawTextCount ??
+                          (Array.isArray(raw?.raw_texts) ? raw.raw_texts.length : "-");
+                        const cleanTextCount =
+                          raw?.clean_text_count ??
+                          raw?.cleanTextCount ??
+                          (Array.isArray(cleanTexts) ? cleanTexts.length : "-");
+
+                        const parseSourceCandidate =
+                          raw?.parse_source_info ??
+                          raw?.parseSourceInfo ??
+                          raw?.parse_source ??
+                          raw?.parseSource ??
+                          null;
+                        const parseSource = parseMaybeJson(parseSourceCandidate);
+                        const parseSourceEntries =
+                          parseSource && typeof parseSource === "object" && !Array.isArray(parseSource)
+                            ? Object.entries(parseSource)
+                            : [];
+                        const parseSourceText = typeof parseSource === "string" ? parseSource : "";
+
+                        return (
+                          <>
+                            <div className="detail-grid" style={{ marginTop: 0 }}>
+                              <div className="detail-box">
+                                <span>Fecha</span>
+                                <strong>{offerFailureModalItem.createdAtFull}</strong>
+                              </div>
+                              <div className="detail-box">
+                                <span>Motivo</span>
+                                <strong>{offerFailureModalItem.reason}</strong>
+                              </div>
+                              <div className="detail-box">
+                                <span>App / Uber</span>
+                                <strong>
+                                  {offerFailureModalItem.appVersion} / {offerFailureModalItem.uberVersion}
+                                </strong>
+                              </div>
+                              <div className="detail-box">
+                                <span>Device hash</span>
+                                <strong className="mono">{offerFailureModalItem.deviceHash}</strong>
+                              </div>
+                            </div>
+
+                            <div className="detail-section">
+                              <p className="detail-label">Dispositivo</p>
+                              <div className="table-wrap">
+                                <table>
+                                  <tbody>
+                                    <tr>
+                                      <td className="muted">Modelo</td>
+                                      <td>{offerFailureModalItem.model}</td>
+                                    </tr>
+                                    <tr>
+                                      <td className="muted">Android</td>
+                                      <td>{offerFailureModalItem.android}</td>
+                                    </tr>
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+
+                            <div className="detail-section">
+                              <p className="detail-label">Contexto</p>
+                              <div className="table-wrap">
+                                <table>
+                                  <tbody>
+                                    <tr>
+                                      <td className="muted">Resolution</td>
+                                      <td className="mono">{String(resolution)}</td>
+                                    </tr>
+                                    <tr>
+                                      <td className="muted">Density</td>
+                                      <td className="mono">{String(density)}</td>
+                                    </tr>
+                                    <tr>
+                                      <td className="muted">Locale</td>
+                                      <td className="mono">{String(locale)}</td>
+                                    </tr>
+                                    <tr>
+                                      <td className="muted">Event type</td>
+                                      <td className="mono">{String(eventType)}</td>
+                                    </tr>
+                                    <tr>
+                                      <td className="muted">Class name</td>
+                                      <td className="mono">{String(className)}</td>
+                                    </tr>
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+
+                            <div className="detail-section">
+                              <p className="detail-label">Oferta detectada</p>
+                              <div className="table-wrap">
+                                <table>
+                                  <tbody>
+                                    <tr>
+                                      <td className="muted">Precio</td>
+                                      <td className="mono">{String(detectedPrice)}</td>
+                                    </tr>
+                                    <tr>
+                                      <td className="muted">Pickup min/km</td>
+                                      <td className="mono">
+                                        {formatMinKm({ minutes: pickupMinutes, km: pickupKm })}
+                                      </td>
+                                    </tr>
+                                    <tr>
+                                      <td className="muted">Viaje min/km</td>
+                                      <td className="mono">
+                                        {formatMinKm({ minutes: tripMinutes, km: tripKm })}
+                                      </td>
+                                    </tr>
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+
+                            <div className="detail-section">
+                              <p className="detail-label">Parse source info</p>
+                              <div className="table-wrap">
+                                <table>
+                                  <tbody>
+                                    {parseSourceText ? (
+                                      <tr>
+                                        <td colSpan={2} className="mono">
+                                          {parseSourceText}
+                                        </td>
+                                      </tr>
+                                    ) : parseSourceEntries.length === 0 ? (
+                                      <tr>
+                                        <td colSpan={2} className="muted">
+                                          -
+                                        </td>
+                                      </tr>
+                                    ) : (
+                                      parseSourceEntries.map(([k, v]) => (
+                                        <tr key={k}>
+                                          <td className="muted">{k}</td>
+                                          <td className="mono">
+                                            {typeof v === "string" ? v : JSON.stringify(v)}
+                                          </td>
+                                        </tr>
+                                      ))
+                                    )}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+
+                            <div className="detail-section">
+                              <div
+                                className="actions-inline"
+                                style={{ justifyContent: "space-between" }}
+                              >
+                                <p className="detail-label" style={{ margin: 0 }}>
+                                  Textos limpios
+                                </p>
+                                <span className="muted">
+                                  raw: {String(rawTextCount)} · clean: {String(cleanTextCount)}
+                                </span>
+                              </div>
+                              {cleanTexts.length === 0 ? (
+                                <p className="muted">Sin textos</p>
+                              ) : (
+                                <ul className="texts-list">
+                                  {cleanTexts.slice(0, 120).map((t, idx) => (
+                                    <li key={`${idx}-${t.slice(0, 24)}`}>{t}</li>
+                                  ))}
+                                </ul>
+                              )}
+                            </div>
+
+                            <div className="detail-section">
+                              <p className="detail-label">Nota (opcional)</p>
+                              <textarea
+                                className="note-input"
+                                value={offerFailureNote}
+                                onChange={(e) => setOfferFailureNote(e.target.value)}
+                                placeholder="Ej: se rompe en ES-AR con Uber 4.5.x, densidad alta…"
+                              />
+                            </div>
+
+                            <div className="detail-section">
+                              <div className="actions-inline">
+                                <button
+                                  type="button"
+                                  className="ghost-btn icon-btn"
+                                  onClick={() =>
+                                    handleCopyOfferFailureDiagnostic(JSON.stringify(raw, null, 2))
+                                  }
+                                >
+                                  <ClipboardCopy size={14} /> Copiar diagnóstico
+                                </button>
+                                {copiedOfferFailureDiagnostic && <span className="muted">Copiado</span>}
+
+                                <button
+                                  type="button"
+                                  className="ghost-btn icon-btn"
+                                  onClick={() => handleCopyOfferFailureTexts(cleanTexts.join("\n"))}
+                                >
+                                  <Copy size={14} /> Copiar textos
+                                </button>
+                                {copiedOfferFailureTexts && <span className="muted">Copiado</span>}
+                              </div>
+                            </div>
+                          </>
+                        );
+                      })()}
+
+                      {!!offerFailureActionError && <p className="muted">{offerFailureActionError}</p>}
+                    </div>
+
+                    <div className="modal-actions">
+                      <button
+                        className="secondary-btn"
+                        type="button"
+                        onClick={() => setOfferFailureModalId("")}
+                      >
+                        Cerrar
+                      </button>
+                      <button
+                        className="primary-btn"
+                        disabled={
+                          !offerFailureModalItem.rawId ||
+                          offerFailureModalItem.status === "Revisado" ||
+                          reviewingOfferFailureId === offerFailureModalItem.rawId ||
+                          loadingOfferFailureDiagnostics
+                        }
+                        onClick={() =>
+                          handleReviewOfferFailure({
+                            id: offerFailureModalItem.rawId,
+                            note: offerFailureNote,
+                          })
+                        }
+                      >
+                        {offerFailureModalItem.status === "Revisado"
+                          ? "Ya revisado"
+                          : reviewingOfferFailureId === offerFailureModalItem.rawId
+                            ? "Procesando..."
+                            : "Marcar revisado"}
+                      </button>
+                      <button
+                        className="secondary-btn danger-btn"
+                        disabled={
+                          !offerFailureModalItem.rawId ||
+                          deletingOfferFailureId === offerFailureModalItem.rawId ||
+                          loadingOfferFailureDiagnostics
+                        }
+                        onClick={() => handleDeleteOfferFailure(offerFailureModalItem.rawId)}
+                      >
+                        {deletingOfferFailureId === offerFailureModalItem.rawId
+                          ? "Eliminando..."
+                          : "Eliminar"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </>
         )}
